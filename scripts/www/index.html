@@ -1,11 +1,1559 @@
 <!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PakePlus</title>
-    </head>
-    <body>
-        PakePlus
-    </body>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CT分析助手 - 专业版 V2.9</title>
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+        /* Animation for fade in */
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
+        /* Spinner */
+        .spinner { border: 2px solid #f3f3f3; border-top: 2px solid #6366f1; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Splash Screen Animations */
+        @keyframes floatUp { 0% { opacity: 0; transform: translateY(20px); } 100% { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse-slow { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.05); opacity: 1; } }
+        .animate-float-up { animation: floatUp 0.8s ease-out forwards; }
+        .animate-float-up-delay { animation: floatUp 0.8s ease-out 0.3s forwards; opacity: 0; }
+        .animate-pulse-slow { animation: pulse-slow 3s infinite ease-in-out; }
+    </style>
+    <script>
+        // 全局错误捕获
+        window.onerror = function(message, source, lineno, colno, error) {
+            console.error(error);
+            return false;
+        };
+    </script>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useRef, useEffect } = React;
+
+        // --- 1. IndexedDB Infrastructure (Mobile Optimization) ---
+        const DB_NAME = 'CTAssistantDB_V2';
+        const DB_VERSION = 1;
+        const STORE_NAME = 'images';
+
+        const initDB = () => {
+            return new Promise((resolve, reject) => {
+                const indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB;
+                if (!indexedDB) {
+                    // Fail silently on splash to avoid ruining the intro experience, handle in app
+                    return reject("IndexedDB not supported");
+                }
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+                        store.createIndex('diseaseId', 'diseaseId', { unique: false });
+                    }
+                };
+                request.onsuccess = (event) => resolve(event.target.result);
+                request.onerror = (event) => reject(event.target.error);
+            });
+        };
+
+        const dbService = {
+            async addImage(diseaseId, imageData) {
+                try {
+                    const db = await initDB();
+                    return new Promise((resolve, reject) => {
+                        const transaction = db.transaction([STORE_NAME], 'readwrite');
+                        const store = transaction.objectStore(STORE_NAME);
+                        const request = store.add({ diseaseId, data: imageData, timestamp: Date.now() });
+                        request.onsuccess = () => resolve({ id: request.result, diseaseId, data: imageData });
+                        request.onerror = (e) => reject(e.target.error);
+                    });
+                } catch (err) { throw err; }
+            },
+            async getImages(diseaseId) {
+                try {
+                    const db = await initDB();
+                    return new Promise((resolve, reject) => {
+                        const transaction = db.transaction([STORE_NAME], 'readonly');
+                        const store = transaction.objectStore(STORE_NAME);
+                        const index = store.index('diseaseId');
+                        const request = index.getAll(diseaseId);
+                        request.onsuccess = () => resolve(request.result);
+                        request.onerror = (e) => reject(e.target.error);
+                    });
+                } catch (err) { return []; }
+            },
+            async deleteImage(id) {
+                try {
+                    const db = await initDB();
+                    return new Promise((resolve, reject) => {
+                        const transaction = db.transaction([STORE_NAME], 'readwrite');
+                        const store = transaction.objectStore(STORE_NAME);
+                        const request = store.delete(id);
+                        request.onsuccess = () => resolve();
+                        request.onerror = (e) => reject(e.target.error);
+                    });
+                } catch (err) { throw err; }
+            }
+        };
+
+        // --- 2. Image Compression Utility (Memory Safe) ---
+        const compressImage = (file, maxWidth = 800, quality = 0.6) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.src = event.target.result;
+                    img.onload = () => {
+                        try {
+                            const canvas = document.createElement('canvas');
+                            let width = img.width;
+                            let height = img.height;
+                            if (width > maxWidth) {
+                                height = Math.round((height * maxWidth) / width);
+                                width = maxWidth;
+                            }
+                            canvas.width = width;
+                            canvas.height = height;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0, width, height);
+                            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+                            resolve(dataUrl);
+                        } catch (e) { reject(e); }
+                    };
+                    img.onerror = (err) => reject(new Error("图片加载失败"));
+                };
+                reader.onerror = (err) => reject(new Error("文件读取失败"));
+            });
+        };
+
+        // --- Icons Components ---
+        const IconBase = ({ children, className, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>{children}</svg>
+        );
+        const Search = (props) => <IconBase {...props}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></IconBase>;
+        const Activity = (props) => <IconBase {...props}><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></IconBase>;
+        const Stethoscope = (props) => <IconBase {...props}><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v6"/><path d="M9 21h6"/><circle cx="12" cy="15" r="3" fill="currentColor" fillOpacity="0.1"/></IconBase>;
+        const BookOpen = (props) => <IconBase {...props}><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></IconBase>;
+        const AlertTriangle = (props) => <IconBase {...props}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></IconBase>;
+        const CheckCircle = (props) => <IconBase {...props}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></IconBase>;
+        const XCircle = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></IconBase>;
+        const Info = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></IconBase>;
+        const BrainCircuit = (props) => <IconBase {...props}><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.97-3.284"/><path d="M17.97 14.716A4 4 0 0 1 16 18"/></IconBase>;
+        const Microscope = (props) => <IconBase {...props}><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3"/></IconBase>;
+        const Dna = (props) => <IconBase {...props}><path d="M2 15c6.667-6 13.333 0 20-6"/><path d="M9 22c1.798-1.998 2.518-3.995 2.807-5.993"/><path d="M15 2c-1.798 1.998-2.518 3.995-2.807 5.993"/><path d="m17 6-2.5-2.5"/><path d="m14 8-1-1"/><path d="m7 18 2.5 2.5"/><path d="m3.5 14.5.5.5"/><path d="m20 9 .5.5"/><path d="m6.5 12.5 1 1"/><path d="m16.5 10.5 1 1"/><path d="m10 16 1.5 1.5"/></IconBase>;
+        const Bug = (props) => <IconBase {...props}><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></IconBase>;
+        const FlaskConical = (props) => <IconBase {...props}><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></IconBase>;
+        const ChevronRight = (props) => <IconBase {...props}><path d="m9 18 6-6-6-6"/></IconBase>;
+        const ChevronDown = (props) => <IconBase {...props}><path d="m6 9 6 6 6-6"/></IconBase>;
+        const User = (props) => <IconBase {...props}><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></IconBase>;
+        const Clock = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></IconBase>;
+        const Eye = (props) => <IconBase {...props}><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></IconBase>;
+        const Aperture = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><path d="m14.31 8 5.74 9.94"/><path d="M9.69 8h11.48"/><path d="m7.38 12 5.74-9.94"/><path d="M9.69 16 3.95 6.06"/><path d="M14.31 16H2.83"/><path d="m16.62 12-5.74 9.94"/></IconBase>;
+        const ImageIcon = (props) => <IconBase {...props}><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></IconBase>;
+        const Plus = (props) => <IconBase {...props}><path d="M5 12h14"/><path d="M12 5v14"/></IconBase>;
+        const Trash2 = (props) => <IconBase {...props}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></IconBase>;
+        const X = (props) => <IconBase {...props}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></IconBase>;
+        const Upload = (props) => <IconBase {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></IconBase>;
+        const Circle = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/></IconBase>;
+        const Scan = (props) => <IconBase {...props}><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M12 8v8"/><path d="M8 12h8"/></IconBase>;
+
+        // --- CYSTIC DIFF DATA ---
+        const CYSTIC_DIFF_DATA = [
+            {
+                id: 'lam',
+                name: '淋巴管平滑肌瘤病 (LAM)',
+                epidemiology: '育龄期女性（几乎100%）。散发或伴TSC（结节性硬化）。',
+                cystFeatures: '圆形、薄壁、大小均一、弥漫分布。无内部结构。',
+                distribution: '全肺弥漫分布，无特定区域优势。肋膈角受累。',
+                ctSigns: '无结节（除非合并MMPH）。常合并气胸、乳糜胸。正常肺实质背景。',
+                mechanism: 'LAM细胞（平滑肌样）增生阻塞小气道 -> 活瓣机制 -> 远端囊性扩张。LAM细胞分泌MMPs破坏弹力纤维。',
+                key: '育龄女性 + 全肺弥漫均匀圆囊'
+            },
+            {
+                id: 'plch',
+                name: '肺朗格汉斯细胞组织细胞增生症 (PLCH)',
+                epidemiology: '年轻吸烟者（20-40岁）。无性别显著差异。',
+                cystFeatures: '形态怪异（三叶草状、不规则）、壁厚薄不均。结节演变为囊肿。',
+                distribution: '上中叶为主。特征性肋膈角豁免（基底正常）。',
+                ctSigns: '早期小叶中心结节（常为空洞性）。晚期囊腔融合。',
+                mechanism: '吸烟刺激 -> 细支气管周LCH细胞聚集 -> 细支气管壁破坏/肉芽肿 -> 中心坏死排出 -> 囊腔形成。',
+                key: '吸烟 + 怪异囊肿 + 肋膈角豁免'
+            },
+            {
+                id: 'bhd',
+                name: 'Birt-Hogg-Dubé 综合征 (BHD)',
+                epidemiology: '家族遗传史。常显遗传 (FLCN基因)。',
+                cystFeatures: '多发、形状不规则、大小不一。透镜状/梭形囊肿。',
+                distribution: '基底部为主，胸膜下、纵隔旁分布优势。',
+                ctSigns: '无结节。伴有肾癌（嫌色细胞癌）、皮肤纤维毛囊瘤。',
+                mechanism: 'FLCN基因突变 -> 卵泡素蛋白功能缺失 -> 细胞间粘附力下降/mTOR通路异常 -> 肺泡壁在牵拉下破裂融合。',
+                key: '基底/纵隔旁 + 家族史 + 皮肤/肾病变'
+            },
+            {
+                id: 'lip',
+                name: '淋巴细胞间质性肺炎 (LIP)',
+                epidemiology: '干燥综合征 (SS)、HIV感染、Castelman病。',
+                cystFeatures: '薄壁、散在、数量较少（相比LAM）。常位于血管旁。',
+                distribution: '随机分布，或沿血管支气管束。',
+                ctSigns: '显著的磨玻璃影 (GGO)、小叶中心微结节。淋巴结肿大。',
+                mechanism: '支气管相关淋巴组织 (BALT) 增生 -> 细支气管部分阻塞（活瓣） -> 远端囊性变。间质淋巴细胞浸润。',
+                key: 'SS/HIV背景 + 囊肿少 + 显著GGO/结节'
+            },
+            {
+                id: 'lcdd',
+                name: '轻链沉积病 (LCDD)',
+                epidemiology: '浆细胞病（多发性骨髓瘤、巨球蛋白血症）。',
+                cystFeatures: '薄壁大囊肿，形态较圆。',
+                distribution: '弥漫分布。',
+                ctSigns: '多发结节、淋巴结肿大、支气管扩张。',
+                mechanism: '单克隆轻链蛋白在肺泡壁/细支气管壁沉积 -> 气道阻塞与组织破坏。',
+                key: '骨髓瘤病史 + 囊肿 + 结节'
+            },
+            {
+                id: 'ss',
+                name: '干燥综合征肺受累 (SS-ILD)',
+                epidemiology: '中年女性，口干眼干。',
+                cystFeatures: '薄壁囊肿，通常作为LIP的表现。',
+                distribution: '血管周围。',
+                ctSigns: '网格影、磨玻璃影、支气管扩张（NSIP/LIP模式）。',
+                mechanism: '自身免疫性淋巴细胞浸润气道壁。',
+                key: '口干眼干 + 囊肿 + 间质炎'
+            }
+        ];
+
+        // --- CAVITY DIFF DATA (NEW) ---
+        const CAVITY_DIFF_DATA = [
+            {
+                id: 'cancer',
+                name: '空洞型肺癌 (Lung Cancer)',
+                epidemiology: '中老年，吸烟史。鳞癌最常见，其次为腺癌。',
+                cavityFeatures: '厚壁空洞 (>3mm)，壁厚薄不均。内壁凹凸不平（壁结节），外缘分叶/毛刺。',
+                distribution: '单发为主，上叶前段多见。',
+                ctSigns: '偏心性空洞，无气液平（除非合并感染）。伴肺门淋巴结肿大。',
+                mechanism: '肿瘤生长过快导致中心缺血坏死，经支气管排出。壁厚不均源于肿瘤浸润生长。',
+                key: '厚壁 + 内壁不平 + 偏心'
+            },
+            {
+                id: 'tb',
+                name: '肺结核空洞 (TB Cavity)',
+                epidemiology: '结核接触史，免疫力低下。',
+                cavityFeatures: '壁厚薄不一。薄壁（净化空洞）或厚壁（干酪空洞）。内壁光滑或稍不整。',
+                distribution: '上叶尖后段，下叶背段。',
+                ctSigns: '卫星灶（周围点状/树芽征），钙化，引流支气管征。',
+                mechanism: '干酪样坏死液化经支气管排出。高氧环境利于结核菌繁殖。',
+                key: '好发部位 + 卫星灶'
+            },
+            {
+                id: 'abscess',
+                name: '肺脓肿 (Lung Abscess)',
+                epidemiology: '误吸史，酗酒，口腔卫生差。急性起病。',
+                cavityFeatures: '厚壁，内壁光滑（急性期），可见气液平面。',
+                distribution: '上叶后段，下叶背段（重力依赖区）。',
+                ctSigns: '大片实变影内的空洞，周围模糊。气液平典型。',
+                mechanism: '化脓性炎症导致组织液化坏死。',
+                key: '气液平 + 急性感染征'
+            },
+            {
+                id: 'metastasis',
+                name: '空洞型转移瘤 (Metastasis)',
+                epidemiology: '原发肿瘤史（头颈部鳞癌、宫颈癌、骨肉瘤）。',
+                cavityFeatures: '多发，薄壁或厚壁。大小不一。',
+                distribution: '中下肺野，胸膜下/外带。',
+                ctSigns: '随机分布，供养血管征。化疗后空洞可变薄。',
+                mechanism: '肿瘤栓子中心坏死或单向活瓣机制。',
+                key: '多发 + 已知原发癌'
+            },
+            {
+                id: 'gpa',
+                name: '肉芽肿性多血管炎 (GPA/Wegener)',
+                epidemiology: '中年，多系统受累（鼻窦炎、肾炎）。',
+                cavityFeatures: '多发，壁厚薄变化快（治疗后变薄）。',
+                distribution: '随机分布，无特定区域。',
+                ctSigns: '伴有磨玻璃影（肺泡出血），多发结节（部分空洞化）。',
+                mechanism: '坏死性肉芽肿性血管炎。',
+                key: '多发空洞 + ANCA阳性 + 肾/鼻病变'
+            },
+             {
+                id: 'fungus',
+                name: '曲霉球 (Aspergilloma)',
+                epidemiology: '既往肺病史（TB、支扩、囊肿）。免疫功能正常或轻度受损。',
+                cavityFeatures: '薄壁囊腔/空洞内见球形软组织影。',
+                distribution: '原有病变部位（常为上叶）。',
+                ctSigns: '空气新月征（Monod征），体位改变时菌球可移动。',
+                mechanism: '曲霉菌在陈旧性空洞内定植繁殖形成菌丝球。',
+                key: '空洞内移动球体 + 空气新月'
+            }
+        ];
+
+        // --- CT SIGNS DATABASE (COMPREHENSIVE EXPANSION) ---
+        const CT_SIGNS_DATABASE = [
+            // ... (keeping signs data)
+            { name: '磨玻璃影 (GGO)', description: '肺密度轻度增高，呈云雾状，但仍能透过病变看到其中行走的肺血管和支气管纹理。', pathology: '肺泡腔内的气体部分被液体（水肿/出血）、细胞（炎症/肿瘤）或纤维组织取代；或者肺泡壁（间质）增厚，但未导致肺泡完全闭塞。', commonCauses: '肺炎早期（病毒/支原体/PCP）、肺水肿（心源性/ARDS）、肺泡出血、非特异性间质性肺炎(NSIP)、过敏性肺炎(HP)、早期肺腺癌（原位癌/微浸润腺癌）。' },
+            { name: '实变 (Consolidation)', description: '肺密度均匀增高，导致其内的血管和支气管壁轮廓消失（血管纹理被掩盖），常伴有支气管充气征。', pathology: '肺泡腔内的气体被液体、蛋白、脓液、血液或细胞完全替代。', commonCauses: '大叶性肺炎（肺链）、机化性肺炎(COP)、肺梗死、肺泡蛋白沉积症(PAP)、淋巴瘤、侵袭性黏液腺癌。' },
+            { name: '铺路石征 (Crazy-paving)', description: '在弥漫性磨玻璃影的背景上，重叠出现小叶间隔增厚和小叶内线状影，形成类似铺路石的网格状改变。', pathology: '肺泡腔充填（磨玻璃） + 间质水肿/淋巴淤滞/纤维化（网格）。', commonCauses: '肺泡蛋白沉积症(PAP)（最典型）、肺孢子菌肺炎(PCP)、ARDS、弥漫性肺泡出血、脂质性肺炎、腺癌。' },
+            { name: '碎石路征 (Cobblestone Sign)', description: '与铺路石征类似，但主要指间质纤维化和牵拉性支气管扩张引起的粗糙网格。在IPF中常见。', pathology: '严重的间质纤维化和肺结构扭曲。', commonCauses: '特发性肺纤维化(IPF)、终末期肺病。' },
+            { name: '树芽征 (Tree-in-bud)', description: '小叶中心结节与分支状线状影相连，形似春天树枝发芽。通常位于肺外围，胸膜下不明显。', pathology: '细支气管腔内被黏液、脓液或肉芽组织填充，并伴有细支气管壁增厚和周围炎症。', commonCauses: '肺结核(TB)（活动性标志）、非结核分枝杆菌(NTM)、弥漫性泛细支气管炎(DPB)、支气管扩张伴感染、吸入性肺炎。' },
+            { name: '晕征 (Halo Sign)', description: '实性结节或肿块周围环绕一圈磨玻璃样阴影。', pathology: '病灶周围的肺泡出血、水肿或肿瘤细胞浸润。', commonCauses: '侵袭性肺曲霉病(IPA)（粒缺患者早期）、肺毛霉菌病、韦格纳肉芽肿(GPA)、嗜酸性粒细胞肺炎、肺腺癌（Lepidic生长）、转移瘤（绒癌/肾癌）。' },
+            { name: '反晕征 (Reversed Halo / Atoll Sign)', description: '中心为磨玻璃影，周围环绕完整或不完整的高密度实变环，形似珊瑚礁。', pathology: '中心为肺泡间隔炎症或坏死碎片，边缘为机化性肺炎区域；或真菌感染引起的中心梗死+边缘出血。', commonCauses: '隐源性机化性肺炎(COP)（最经典）、肺毛霉菌病（真菌球）、肺结核、类肉瘤病、射频消融术后。' },
+            { name: '空气新月征 (Air Crescent)', description: '肺内空洞或空腔内的球形病灶与洞壁之间出现新月形的气体透亮影。', pathology: '坏死组织（如梗死肺组织或菌球）收缩，或空洞壁与内部内容物分离。', commonCauses: '侵袭性肺曲霉病（恢复期，白细胞回升时）、曲霉球（寄生在陈旧空洞内）、肺结核（Rasmussen动脉瘤）、包虫囊肿破裂。' },
+            { name: '银河征 (Galaxy Sign)', description: '由无数微小结节融合而成的大结节，中心密度高，边缘不规则，周围环绕大量散在的卫星状微小结节。', pathology: '肉芽肿性病变的融合与周围播散。', commonCauses: '结节病 (Sarcoidosis)、肺结核、尘肺。' },
+            { name: '簇以此征 (Cluster Sign)', description: '多个小结节聚集在一起，形成簇状分布，但未融合。', pathology: '肉芽肿性炎症沿淋巴管或细支气管分布聚集。', commonCauses: '结节病、肺结核。' },
+            { name: '供养血管征 (Feeding Vessel Sign)', description: '可以清晰地看到一支血管直接进入结节或肿块中心。', pathology: '提示病变为血源性来源，即通过血流播散到达肺部。', commonCauses: '血行转移瘤、脓毒性肺栓塞、肺动静脉瘘(PAVM)。' },
+            { name: '分叶征 (Lobulation)', description: '结节或肿块表面呈花瓣状或波浪状起伏不平。', pathology: '肿瘤各部分生长速度不均，或受支气管、血管等结缔组织阻挡所致。', commonCauses: '周围型肺癌（尤其是腺癌）、错构瘤（深分叶）、结核球（较少见）。' },
+            { name: '毛刺征 (Spiculation)', description: '结节边缘向周围肺实质延伸的放射状、短细的线条影。', pathology: '肿瘤向周围浸润性生长，阻塞血管/淋巴管，或引起周围纤维结缔组织增生反应。', commonCauses: '恶性肿瘤（肺腺癌最典型）、炎性假瘤（长毛刺）、结核球。' },
+            { name: '空泡征 (Vacuole Sign)', description: '结节内出现点状或小条状的低密度透亮影，直径通常<5mm。', pathology: '未被肿瘤组织占据的含气肺泡腔、扩张的细支气管，或肿瘤内的坏死排出。', commonCauses: '早期肺腺癌（原位癌/微浸润腺癌）、细支气管肺泡癌。' },
+            { name: '蜂窝征 (Honeycombing)', description: '胸膜下多层囊状透亮影，壁厚，大小不一，类似蜂窝。通常伴有显著的肺结构扭曲和牵拉性支扩。', pathology: '终末期肺纤维化导致肺泡结构完全破坏、塌陷和囊性重组。', commonCauses: '特发性肺纤维化(IPF)、慢性过敏性肺炎(HP)、石棉肺、结缔组织病相关ILD（RA/SSc）。' },
+            { name: '小叶间隔增厚 (Septal Thickening)', description: '肺内呈现细线状网格影，勾勒出次级肺小叶的轮廓（多边形）。分为光滑性及结节性。', pathology: '小叶间隔内的淋巴管、静脉或结缔组织因液体、细胞或纤维化而增宽。', commonCauses: '光滑性：肺水肿（Kerley B线）、肺泡蛋白沉积症。结节性：癌性淋巴管炎、结节病、淋巴瘤。' },
+            { name: '界面征 (Interface Sign)', description: '血管、支气管或胸膜的边缘变得不规则、毛糙，呈锯齿状。', pathology: '间质纤维化或炎症浸润至邻近肺实质界面。', commonCauses: '间质性肺病 (IPF, NSIP)。' },
+            { name: '胸膜下线 (Subpleural Line)', description: '距离胸膜下1cm以内的、与胸壁平行的弧形细线影。', pathology: '细支气管阻塞引起的局限性肺不张，或早期间质纤维化。', commonCauses: '石棉肺（早期特征）、IPF、系统性硬化症肺部受累。' },
+            { name: '印戒征 (Signet Ring Sign)', description: '横断面上，扩张的支气管与其伴行的肺动脉断面直径之比 > 1.5，形似印戒（支气管为戒环，动脉为宝石）。', pathology: '支气管壁破坏导致的管腔异常扩张。', commonCauses: '支气管扩张症（感染后/CF/先天性）。' },
+            { name: '双轨征 (Tram Track Sign)', description: '支气管壁增厚，在纵切面上表现为平行的线状高密度影，形似铁轨。', pathology: '支气管壁的慢性炎症、水肿或纤维化。', commonCauses: '圆柱状支气管扩张、慢性支气管炎、哮喘、肺水肿（支气管袖口征）。' },
+            { name: '指套征 (Finger-in-Glove)', description: '扩张的支气管被黏液栓、脓液或菌丝填充，呈现为分支状、管状或棒状的高密度影。', pathology: '支气管分泌物潴留且排出不畅。', commonCauses: '变应性支气管肺曲霉病(ABPA)、支气管闭锁、囊性纤维化、支气管内肿瘤阻塞。' },
+            { name: '马赛克灌注 (Mosaic Attenuation)', description: '肺野密度不均匀，呈地图状黑白相间。吸气相可见，呼气相可能增强（空气潴留）。', pathology: '小气道病变导致的空气潴留（低密度区为病变）或血管病变导致的灌注不均（低密度区为缺血）。', commonCauses: '小气道病：闭塞性细支气管炎、过敏性肺炎、哮喘。血管病：慢性血栓栓塞性肺高压(CTEPH)。' },
+            { name: '佩刀鞘样气管 (Saber-Sheath Trachea)', description: '气管冠状径明显变窄，矢状径增加（矢状/冠状 > 2），仅限于胸内气管。', pathology: '胸内压改变引起的气管重塑。', commonCauses: '慢性阻塞性肺疾病 (COPD)。' },
+            { name: 'CT血管造影征 (CT Angiogram Sign)', description: '在增强扫描的低密度实变区内，可见强化明显的正常血管分支穿行其中。', pathology: '病变填充肺泡腔（实变），但未破坏肺泡间隔和血管壁，保持了血管床的完整性。', commonCauses: '浸润性黏液腺癌（最经典）、淋巴瘤、阻塞性肺炎、大叶性肺炎。' },
+            { name: '弯刀征 (Scimitar Sign)', description: '右下肺出现一条垂直向下走行、逐渐增宽并弯向内侧进入下腔静脉的异常血管影。', pathology: '部分性肺静脉异位引流。', commonCauses: '弯刀综合征 (Scimitar Syndrome)。' },
+            { name: '指关节征 (Knuckle Sign)', description: '肺动脉分支突然中断或呈圆形隆起，形似指关节。', pathology: '肺栓塞导致的血管截断，或血管内的栓子。', commonCauses: '肺栓塞 (PE)。' },
+            { name: '韦斯特马克征 (Westermark Sign)', description: '局限性肺野透亮度增加，血管纹理稀疏或消失。', pathology: '肺栓塞阻塞近端血管，导致远端肺组织血流灌注减少（少血症）。', commonCauses: '肺栓塞 (PE)。' },
+            { name: '胸膜分裂征 (Split Pleura Sign)', description: '增强扫描见脏层和壁层胸膜被积液分开，且两层胸膜均增厚、强化，呈“三明治”样。', pathology: '胸膜表面的炎症反应导致血管通透性增加和纤维素沉积，常见于感染性病变。', commonCauses: '脓胸（鉴别脓胸与肺脓肿的关键）、恶性胸腔积液、滑石肺胸膜粘连。' },
+            { name: '彗星尾征 (Comet Tail Sign)', description: '胸膜下肿块，其内侧可见支气管血管束呈漩涡状向肿块中心卷入，形似彗星尾巴。', pathology: '胸膜肥厚粘连导致临近肺组织卷入和塌陷，是一种特殊的肺不张。', commonCauses: '圆形肺不张 (Round Atelectasis)（良性，常有石棉接触史）。' },
+            { name: '反S征 (Golden S Sign)', description: '右上叶肺不张导致水平裂外侧向上移位，而内侧因肺门肿块阻挡而向下膨隆，整体呈反写的“S”形。', pathology: '中央型占位阻塞右上叶支气管 -> 肺不张 + 肿块占位效应。', commonCauses: '中央型肺癌（右上叶）。' },
+            { name: '浮莲征 (Water Lily Sign)', description: '囊肿内的液面上漂浮着塌陷的内囊膜，形似水中浮莲。', pathology: '包虫囊肿（棘球蚴病）内囊破裂，囊液部分排出，内囊膜塌陷漂浮。', commonCauses: '肺包虫病 (Hydatid Cyst)。' },
+            { name: '新月形铲征 (Monod Sign)', description: '原有的肺空洞或囊肿内出现真菌球，空气环绕在菌球周围，随着体位改变菌球可移动。', pathology: '曲霉菌在陈旧性空洞内定植繁殖形成的菌丝球。', commonCauses: '曲霉球 (Aspergilloma)。' },
+            { name: '胸膜凹陷征 (Pleural Tag)', description: '从结节或肿块边缘向胸膜延伸的三角形或线状高密度影，导致胸膜向内牵拉凹陷。', pathology: '肿瘤内的纤维瘢痕组织收缩，通过小叶间隔纤维牵拉脏层胸膜。', commonCauses: '肺腺癌（常见）、结核球、慢性炎症瘢痕。' },
+            { name: '枯枝征 (Dead Tree Sign)', description: '含气支气管分支僵硬、变细、扭曲，周围肺实质无充气（实变或磨玻璃），形似枯树枝。', pathology: '肺泡实变但支气管通畅，且支气管壁僵硬、无弹性。', commonCauses: '肺腺癌（尤其是肺炎型）、淋巴瘤。' },
+            { name: '铺路石征 (Crazy Paving)', description: '磨玻璃影背景下叠加小叶间隔增厚。', pathology: '肺泡填充与间质增厚并存。', commonCauses: '肺泡蛋白沉积症、PCP、ARDS、肺出血。' },
+            { name: '叶间裂膨隆 (Bulging Fissure)', description: '实变的肺叶体积增大，向外压迫叶间裂使其呈弧形突出。', pathology: '炎性渗出物量大且黏稠，重力作用显著。', commonCauses: '克雷伯菌肺炎（典型）、金葡菌肺炎、肺炭疽。' },
+            { name: '黑边征 (Black Pleura Sign)', description: '肺泡微石症中，高密度的肺实质与肋骨之间出现一条透亮的胸膜下黑带。', pathology: '胸膜下肺小叶受累较轻或胸膜下脂肪层对比。', commonCauses: '肺泡微石症。' },
+            { name: '果酱征 (Strawberry Jam)', description: '虽然是临床症状（痰），但在CT上对应肺实变伴坏死。', pathology: '肺吸虫病在肺内移行引起的出血性坏死隧道。', commonCauses: '肺吸虫病（并殖吸虫）。' }
+        ];
+
+        // --- FULL DISEASE DATABASE ---
+        const FULL_DATABASE = [
+            // ... (keeping all enhanced disease data as requested) ...
+            { 
+                id: 'strep', 
+                category: '感染性疾病', 
+                name: '肺炎链球菌肺炎', 
+                clinicalGeneral: '急骤起病，寒战、高热（39-40℃）、全身肌肉酸痛、胸痛。',
+                clinicalSpecific: '典型的“铁锈色痰”。口角或鼻周可出现单纯疱疹。肺部实变体征（叩诊浊音、语颤增强）。',
+                clinicalContext: 'CAP首位。脾切除者（荚膜菌清除能力下降）。', 
+                earlyStage: '模糊GGO进展为大叶实变。', 
+                signs: ['实变', '支气管充气征', '磨玻璃影', '胸腔积液'], 
+                pearls: '典型大叶肺炎，痊愈后不留痕迹。【鉴别】：①支原体肺炎：后者多为间质改变/树芽征，无肺泡实变典型。②克雷伯菌：后者实变易坏死、叶间裂膨隆。', 
+                pathology: '【非坏死性大叶性实变与充血期/肝样变期】细菌在肺泡内大量繁殖，引发纤维素性炎。炎性渗出物通过肺泡壁上的Cohn孔（肺泡孔）迅速向邻近肺泡蔓延，导致一个肺段或肺叶的均匀实变。由于该菌通常不产生组织坏死毒素，愈合后肺泡壁结构完整（Restitutio ad integrum），因此不留痕迹。支气管内虽然充满渗出物但管壁结构未受损，故常见清晰的“空气支气管征”。', 
+                microbiology: 'G+双球菌，矛头状成对排列，α溶血（草绿色）。【关键致病因子】：荚膜（多糖抗原，抗吞噬）。无荚膜者无致病力。对Optochin敏感。尿抗原检测特异性高。' 
+            },
+            { 
+                id: 'staph', 
+                category: '感染性疾病', 
+                name: '金黄色葡萄球菌肺炎', 
+                clinicalGeneral: '起病急，毒血症状重（寒战高热、脉快、发绀），可早期出现休克。',
+                clinicalSpecific: '咳脓血痰或粉红色乳状痰。儿童多见肺气囊肿。可伴有皮肤化脓灶。',
+                clinicalContext: '流感后继发（协同作用）、静脉吸毒、儿童。', 
+                earlyStage: '进展极快，早起实变。', 
+                signs: ['肺气囊', '空洞', '脓胸', '液气胸', '实变', '多发结节'], 
+                pearls: '变脸快，肺气囊是名片。【鉴别】：①克雷伯菌：均为坏死性肺炎，但金葡菌肺气囊更显著，且常伴脓气胸。②GPA：GPA空洞壁厚薄不均，ANCA阳性。', 
+                pathology: '【化脓性坏死性炎症与活瓣机制】细菌分泌凝固酶、溶血素及杀白细胞素（PVL），导致肺组织迅速发生凝固性坏死和液化，形成多发性微脓肿。细支气管因炎性水肿和脓栓形成“球阀”活瓣，吸气时气体进入，呼气时受阻，导致远端肺泡过度充气破裂，融合形成特征性的“肺气囊”。血源性播散（如静脉吸毒）表现为脓毒性栓子引起的双肺多发周边结节，并在短时间内空洞化。', 
+                microbiology: 'G+球菌，葡萄串状排列，β溶血（透明）。【关键酶】：血浆凝固酶（+，致病标志）。MRSA携带mecA基因，PBP2a改变导致β-内酰胺类失效。' 
+            },
+            { 
+                id: 'kleb', 
+                category: '感染性疾病', 
+                name: '肺炎克雷伯菌肺炎', 
+                clinicalGeneral: '起病急，寒战高热，全身衰竭感明显。',
+                clinicalSpecific: '特征性咳“砖红色胶冻状痰”。易发生多发性肺脓肿。',
+                clinicalContext: '酗酒、糖尿病、老年。砖红色痰。', 
+                earlyStage: '右上叶实变。', 
+                signs: ['叶间裂膨隆', '实变', '脓肿', '空洞', '假肿瘤征'], 
+                pearls: '重力效应致叶间裂下坠。【鉴别】：①金黄色葡萄球菌：均为多发脓肿，但克雷伯菌叶间裂膨隆更典型。②肺结核：结核空洞多在上叶尖后段，无砖红色痰。', 
+                pathology: '【出血坏死性炎症与胶冻样渗出】细菌产生厚厚的酸性多糖荚膜，导致炎性渗出物极其黏稠、量大且沉重。这种大量的渗出物积聚在肺叶内（好发于右上叶），不仅造成肺叶体积增大、重量增加，压迫叶间裂使其呈弧形下坠（叶间裂膨隆征），而且因血管受损导致渗出物中含血，形成典型的“砖红色胶冻样痰”。组织易发生凝固性坏死，快速形成多发虫蚀样空洞。', 
+                microbiology: 'G-杆菌，短粗，荚膜极厚（黏液型菌落）。乳糖发酵阳性。拉丝试验阳性（高黏滞性）。常见ESBLs（超广谱β-内酰胺酶）或CRE（耐碳青霉烯），治疗难度大。' 
+            },
+            { 
+                id: 'pseudo', 
+                category: '感染性疾病', 
+                name: '铜绿假单胞菌肺炎', 
+                clinicalGeneral: '院内感染常见，毒血症状重，体温波动大。',
+                clinicalSpecific: '咳翠绿色或黄绿色脓痰（特异性高）。呼吸道有甜腥味/生姜味。',
+                clinicalContext: '支扩/CF基础，呼吸机相关(VAP)。', 
+                earlyStage: '弥漫细支气管炎。', 
+                signs: ['树芽征', '支气管扩张', '实变', '空洞', '脓肿'], 
+                pearls: '支扩基础上的新病灶。【鉴别】：①金葡菌：铜绿常有支扩/囊性纤维化基础。②误吸性肺炎：部位不同，误吸在重力依赖区。', 
+                pathology: '【坏死性血管炎与出血性梗死】铜绿假单胞菌具有高度的噬血管性。细菌释放的弹性蛋白酶和外毒素A可直接侵蚀肺血管壁，引起坏死性血管炎、血管栓塞，进而导致受累肺组织的出血性梗死和凝固性坏死（类似真菌的血管侵袭，但病程更急）。在慢性感染（如CF或支扩）中，细菌分泌藻酸盐形成生物膜（Biofilm），导致抗生素难以渗透且难以清除。', 
+                microbiology: 'G-杆菌，专性需氧。氧化酶阳性。产生绿脓素（蓝绿色）和荧光素（黄绿色），混合后呈翠绿色。具有生姜味/葡萄味。' 
+            },
+            { 
+                id: 'haemo', 
+                category: '感染性疾病', 
+                name: '流感嗜血杆菌肺炎', 
+                clinicalGeneral: '起病较缓，类似慢性支气管炎急性发作。',
+                clinicalSpecific: '痉挛性咳嗽，喘息明显，咳黄脓痰。容易引起COPD急性加重。',
+                clinicalContext: 'COPD急性加重(AECOPD)最常见病原。', 
+                earlyStage: '支气管壁增厚。', 
+                signs: ['支气管壁增厚', '磨玻璃影', '树芽征', '斑片影'], 
+                pearls: 'COPD患者的沿支气管分布斑片影。【鉴别】：①肺炎支原体：均为支气管壁增厚，但流感嗜血杆菌多见于COPD老年人。', 
+                pathology: '【化脓性支气管炎与支气管肺炎】该菌主要定植于呼吸道上皮。感染引起支气管和细支气管黏膜的化脓性炎症，导致管壁充血、水肿和增厚（CT示支气管壁增厚）。炎性分泌物阻塞细支气管形成“树芽征”。病变主要沿支气管分布，表现为双下肺为主的支气管肺炎，一般不引起肺实质的广泛坏死或空洞。', 
+                microbiology: 'G-短小球杆菌，多形性。营养要求高，需X因子（血红素）和V因子（NAD）。在金葡菌菌落周围生长更佳（卫星现象）。' 
+            },
+            { 
+                id: 'abscess', 
+                category: '感染性疾病', 
+                name: '肺脓肿 (厌氧菌)', 
+                clinicalGeneral: '急性起病，畏寒、高热。慢性期可见贫血、消瘦。',
+                clinicalSpecific: '咳大量脓臭痰（每日可达数百毫升），静置后分层。口腔常有烂牙/牙周炎。',
+                clinicalContext: '误吸史，口腔卫生差。酒精中毒。', 
+                earlyStage: '大片浓密阴影。', 
+                signs: ['气液平', '空洞', '实变', '脓肿'], 
+                pearls: '厚壁空洞+气液平+脓臭痰。【鉴别】：①空洞型肺癌：无脓臭痰，壁厚薄不均，内壁凹凸不平。', 
+                pathology: '【吸入性阻塞与液化坏死】吸入含大量厌氧菌的口咽分泌物/呕吐物 -> 阻塞细支气管 -> 远端肺不张创造厌氧环境 -> 细菌繁殖引起化脓性炎症 -> 组织发生液化性坏死。坏死物液化后经支气管排出，空气进入，形成带有气液平面的厚壁空洞。厌氧菌代谢产生挥发性短链脂肪酸，导致痰液恶臭。', 
+                microbiology: '90%为混合感染，以厌氧菌为主（脆弱拟杆菌、核梭杆菌、消化链球菌）。标本需严格厌氧培养（避免接触空气）。' 
+            },
+            { 
+                id: 'nocardia', 
+                category: '感染性疾病', 
+                name: '肺奴卡菌病', 
+                clinicalGeneral: '亚急性或慢性起病，类似结核。',
+                clinicalSpecific: '常伴有肺外播散：皮肤脓肿（皮下结节）、脑脓肿（头痛）。',
+                clinicalContext: '细胞免疫缺陷（激素/移植）。', 
+                earlyStage: '小结节。', 
+                signs: ['低密度坏死区', '实变', '结节', '空洞'], 
+                pearls: '含液化坏死区的结节/实变 + 脑/皮下脓肿。【鉴别】：①放线菌：奴卡菌需氧，易脑播散；放线菌厌氧，多侵犯面颈部。②肺结核：影像极似，需弱抗酸染色鉴别。', 
+                pathology: '【化脓性肉芽肿性炎】机体对奴卡菌的反应兼具化脓（中性粒细胞聚集）和肉芽肿（组织细胞/巨细胞）特征。病灶中央极易发生液化坏死，形成含有细菌的脓肿。CT上表现为结节或实变影内部出现低密度区（液化），随后空洞化。具有穿越组织平面的能力。', 
+                microbiology: 'G+丝状分枝杆菌，专性需氧。弱抗酸染色阳性（红色，区别于放线菌）。生长缓慢（需延长培养时间）。' 
+            },
+            { 
+                id: 'legion', 
+                category: '感染性疾病', 
+                name: '军团菌肺炎', 
+                clinicalGeneral: '高热（>40℃），相对缓脉。',
+                clinicalSpecific: '突出的肺外症状：腹泻、神志淡漠、低钠血症、肌痛。',
+                clinicalContext: '空调水/土壤接触。低钠，腹泻。', 
+                earlyStage: '快速进展实变。', 
+                signs: ['实变', '磨玻璃影', '胸腔积液', '纵隔淋巴结增大', '反晕征'], 
+                pearls: '重症肺炎+低钠+神志改变+β内酰胺无效。【鉴别】：①大叶性肺炎：军团菌进展更快，多肺叶受累。', 
+                pathology: '【急性纤维素性化脓性炎】肺泡腔内充满纤维素、中性粒细胞和被破坏的巨噬细胞（白细胞破碎现象）。病变常起始于肺泡，相对保留细支气管，因此在实变区内可见清晰的空气支气管征。炎症常引起肺泡上皮广泛损伤，导致严重的通气/血流比例失调和低氧血症。', 
+                microbiology: 'G-杆菌（革兰染色难着色）。专性需氧，兼性胞内寄生。需含半胱氨酸和铁的培养基（BCYE）。尿抗原检测（Lp1型）快速敏感。' 
+            },
+            { 
+                id: 'myco', 
+                category: '感染性疾病', 
+                name: '肺炎支原体肺炎', 
+                clinicalGeneral: '起病缓慢，乏力、咽痛、头痛。',
+                clinicalSpecific: '刺激性干咳（阵发性剧咳），咳少量黏痰。症状重但肺部体征轻（症状影像分离）。',
+                clinicalContext: '青少年，社区爆发。', 
+                earlyStage: '间质改变。', 
+                signs: ['树芽征', '支气管壁增厚', '磨玻璃影', '小叶中心结节'], 
+                pearls: '症状影像分离，树芽征明显。【鉴别】：①病毒性肺炎：支原体树芽征更明显（细支气管炎更重）。②肺结核：树芽征相似，但支原体无空洞，病程急性。', 
+                pathology: '【间质性细支气管炎】支原体通过P1黏附蛋白吸附于呼吸道纤毛上皮，释放过氧化氢导致纤毛破坏和上皮脱落（纤毛运动停滞）。这引发了细支气管壁及血管周围的淋巴细胞和浆细胞浸润（袖口样改变），导致管腔狭窄、分泌物潴留（树芽征）以及小叶间隔增厚（磨玻璃影）。', 
+                microbiology: '无细胞壁（β-内酰胺类抗生素无效）。菌落呈“煎蛋样”。冷凝集试验阳性。' 
+            },
+            { 
+                id: 'tb', 
+                category: '感染性疾病', 
+                name: '肺结核', 
+                clinicalGeneral: '午后低热、面颊潮红、盗汗、乏力、消瘦。',
+                clinicalSpecific: '咯血。女性月经不调。',
+                clinicalContext: '接触史，免疫力下降。', 
+                earlyStage: '尖后段渗出。', 
+                signs: ['树芽征', '空洞', '钙化', '肉冻征', '实变', '卫星灶'], 
+                pearls: '三多三少（多灶多态多钙化），树芽征提示活动。【鉴别】：①NTM：NTM多见于老年女性中叶/舌叶，少干酪坏死。②肺癌：结核多有钙化、卫星灶。', 
+                pathology: '【干酪样坏死性肉芽肿】IV型变态反应。典型病变为中心无结构的干酪样坏死（缺氧环境抑制细菌），周围环绕上皮样细胞、朗格汉斯巨细胞和淋巴细胞。当干酪样物质液化并通过支气管排出时，空气进入形成空洞（高氧环境促进细菌大量繁殖）。含菌物质沿支气管播散形成“树芽征”。', 
+                microbiology: '抗酸杆菌（红色），细胞壁含大量分枝菌酸。生长缓慢（罗氏培养基）。GeneXpert可检测DNA及利福平耐药基因。' 
+            },
+            { 
+                id: 'ntm', 
+                category: '感染性疾病', 
+                name: '非结核分枝杆菌 (NTM)', 
+                clinicalGeneral: '慢性咳嗽、咳痰、咯血，全身中毒症状轻。',
+                clinicalSpecific: 'Lady Windermere综合征：中老年女性，抑制咳嗽，中叶舌叶病变。',
+                clinicalContext: '老年女性，支扩基础。', 
+                earlyStage: '小结节。', 
+                signs: ['支气管扩张', '树芽征', '薄壁空洞', '小结节'], 
+                pearls: '正规抗结核无效，中叶舌叶支扩+小结节。【鉴别】：①肺结核：NTM进展极慢，少干酪坏死。', 
+                pathology: '【肉芽肿性炎症与支气管扩张】病理上形成类似结核的肉芽肿，但干酪样坏死较少见。由于患者常有自主咳嗽抑制或纤毛清除功能障碍，细菌长期定植导致慢性炎症，破坏支气管壁弹力层，引起不可逆的柱状或囊状支气管扩张（尤其是中叶和舌叶）。', 
+                microbiology: '环境分枝杆菌（土壤、水）。抗酸染色阳性。根据生长速度和产色素情况分类（Runyon分类）。' 
+            },
+            { 
+                id: 'IPA', 
+                category: '感染性疾病', 
+                name: '侵袭性肺曲霉病 (IPA)', 
+                clinicalGeneral: '发热（广谱抗生素无效）、咳嗽、胸痛。',
+                clinicalSpecific: '咯血（血管侵袭所致，可为致死性）。',
+                clinicalContext: '粒细胞缺乏，移植，激素。', 
+                earlyStage: '晕征。', 
+                signs: ['晕征', '空气新月征', '结节', '楔形实变'], 
+                pearls: '粒缺+晕征=IPA。【鉴别】：①肺毛霉菌病：毛霉菌为反晕征，进展更快。②细菌性肺炎：抗生素无效，GM试验阳性。', 
+                pathology: '【血管侵袭性真菌病】曲霉菌丝侵入肺小动脉，引起血栓形成和局部肺组织的出血性梗死。CT上的“晕征”即代表中心的凝固性坏死结节周围环绕着出血区。在骨髓恢复期（中性粒细胞回升），白细胞对坏死组织进行清理和分离，坏死灶收缩，与周围肺组织之间形成新月形空隙，即“空气新月征”。', 
+                microbiology: '烟曲霉最常见。镜下见45°锐角分枝、有隔菌丝。半乳甘露聚糖（GM）试验阳性。' 
+            },
+            { 
+                id: 'ABPA', 
+                category: '感染性疾病', 
+                name: '变应性支气管肺曲霉病', 
+                clinicalGeneral: '反复发作的哮喘，伴低热。',
+                clinicalSpecific: '咳出棕褐色胶冻样痰栓（内含菌丝）。',
+                clinicalContext: '哮喘史，CF患者。', 
+                earlyStage: '游走性阴影。', 
+                signs: ['指套征', '中心性支扩', '黏液栓', '树芽征', '高密度黏液'], 
+                pearls: '哮喘+指套征+嗜酸高。【鉴别】：①支气管结核：ABPA为中心性支扩，指套征典型。', 
+                pathology: '【变态反应性炎症】这是对曲霉抗原发生的I型和III型变态反应，而非菌丝侵入组织。支气管腔内充满含大量嗜酸性粒细胞和夏科-莱登结晶的变应性黏液栓（CT高密度），导致支气管阻塞（指套征）。长期免疫反应破坏支气管壁，引起特征性的中心性支气管扩张。', 
+                microbiology: '曲霉在气道内定植（非侵袭）。血清总IgE显著升高（>1000 IU/mL）。曲霉特异性IgE/IgG阳性。' 
+            },
+            { 
+                id: 'pcp', 
+                category: '感染性疾病', 
+                name: '肺孢子菌肺炎 (PCP)', 
+                clinicalGeneral: '进行性呼吸困难、干咳、发热。',
+                clinicalSpecific: '症状（重度低氧）与体征（肺部听诊正常）极不匹配。',
+                clinicalContext: 'HIV (CD4<200)，长期激素/免疫抑制。', 
+                earlyStage: '弥漫GGO。', 
+                signs: ['磨玻璃影', '肺气囊', '铺路石征', '月弓征'], 
+                pearls: 'GGO+上肺囊肿+低氧重体征轻。【鉴别】：①肺水肿：PCP体征轻，无心衰表现。②CMV肺炎：影像相似，需病原学鉴别。', 
+                pathology: '【肺泡泡沫样渗出与间质炎】肺泡腔内充满嗜酸性泡沫状渗出物（含大量囊状虫体、纤维素和宿主蛋白），导致气体交换严重受损（低氧血症）。肺泡间隔因淋巴浆细胞浸润而增厚（CT磨玻璃影）。部分病例因炎症坏死或活瓣机制，可在上肺形成薄壁囊肿（肺气囊），易并发气胸。', 
+                microbiology: '耶氏肺孢子菌（真菌）。染色见包囊（六胺银染色GMS，呈乒乓球拍状）。无法常规培养。血清1,3-β-D-葡聚糖（G试验）阳性。' 
+            },
+            { 
+                id: 'crypto', 
+                category: '感染性疾病', 
+                name: '肺隐球菌病', 
+                clinicalGeneral: '多无症状，或仅有轻微咳嗽。',
+                clinicalSpecific: '症状与影像分离（影像重，症状轻）。',
+                clinicalContext: '鸽粪接触，免疫正常或缺陷。', 
+                earlyStage: '胸膜下结节。', 
+                signs: ['孤立结节', '晕征', '空泡征', '空洞', '蘑菇兄弟'], 
+                pearls: '症状轻影像重，结节光整，胸膜下分布。【鉴别】：①肺癌：隐球菌结节多位于胸膜下，晕征少见于肺癌。', 
+                pathology: '【胶冻样病变与肉芽肿】隐球菌具有厚厚的酸性多糖荚膜，能抑制白细胞吞噬和炎症反应。因此病变处炎症反应轻微，主要表现为大量荚膜聚集形成的胶冻状团块（Toruloma），而非典型的化脓性实变。这种胶冻状物质在CT上表现为边缘相对光整的结节或肿块，周围可有少量出血（晕征）。', 
+                microbiology: '新型隐球菌（圆酵母，宽厚荚膜）。墨汁染色可见透亮荚膜。乳胶凝集试验（CrAg）检测荚膜抗原灵敏度极高。' 
+            },
+            { 
+                id: 'mucor', 
+                category: '感染性疾病', 
+                name: '肺毛霉菌病', 
+                clinicalGeneral: '持续高热、胸痛、呼吸困难。',
+                clinicalSpecific: '进展极快。可伴鼻窦坏死（黑痂）。',
+                clinicalContext: '糖尿病酮症酸中毒(DKA)，血液病。', 
+                earlyStage: '反晕征。', 
+                signs: ['反晕征', '实变', '厚壁空洞', '坏死'], 
+                pearls: 'DKA+反晕征=毛霉。【鉴别】：①IPA：毛霉菌反晕征更典型，晕征少见，进展更快。', 
+                pathology: '【爆发性血管侵袭与黑色坏死】毛霉菌具有比曲霉更强的血管侵袭力。宽大的菌丝直接穿透血管壁，引起广泛的血栓形成和肺组织缺血性梗死（黑色焦痂）。CT上的“反晕征”反映了中心是磨玻璃样的梗死区，外周的高密度环是机化性肺炎或出血带。病情进展极快，死亡率极高。', 
+                microbiology: '毛霉目（根霉、毛霉）。镜下见宽大、无隔、90°直角分枝的菌丝（类似丝带）。' 
+            },
+            { 
+                id: 'psittacosis', 
+                category: '感染性疾病', 
+                name: '鹦鹉热衣原体肺炎', 
+                clinicalGeneral: '高热（>39℃）、寒战、肌痛（尤其是颈背部）、剧烈头痛。',
+                clinicalSpecific: '相对缓脉（Horder征）。可有肝脾肿大、Horder斑（玫瑰疹）。',
+                clinicalContext: '鸟类/家禽接触史（鹦鹉、鸽子、鸡鸭）。', 
+                earlyStage: '磨玻璃影或实变。', 
+                signs: ['实变', '磨玻璃影', '晕征', '反晕征', '胸腔积液'], 
+                pearls: '鸟类接触史 + 剧烈头痛/肌痛 + 相对缓脉。【鉴别】：①病毒性肺炎：鹦鹉热实变多见，全身中毒症状（肌痛/头痛）更重，有明确接触史。', 
+                pathology: '【间质性与肺泡性混合炎】衣原体感染引起全身网状内皮系统受累（肝脾肿大）。肺部表现为支气管上皮细胞坏死脱落，肺间质和肺泡内充满以单核细胞和巨噬细胞为主的炎性渗出物，导致肺实变。由于是全身性感染，常伴有非特异性的胸膜反应（胸腔积液）。', 
+                microbiology: '鹦鹉热衣原体。专性细胞内寄生。生活史包含原体（EB，具感染性）和始体（RB，具繁殖性）。确诊主要依靠mNGS（宏基因组测序）。' 
+            },
+            { 
+                id: 'tala', 
+                category: '感染性疾病', 
+                name: '马尔尼菲蓝状菌病', 
+                clinicalGeneral: '长期发热、消瘦、贫血、淋巴结肿大、肝脾肿大。',
+                clinicalSpecific: '特征性皮疹（面颈部躯干坏死性丘疹，呈脐凹状）。溶骨性破坏。',
+                clinicalContext: '艾滋病(HIV)，流行区（华南/东南亚）旅居史。', 
+                earlyStage: '弥漫性粟粒结节。', 
+                signs: ['多发结节', '空洞', '磨玻璃影', '淋巴结肿大', '胸腔积液'], 
+                pearls: 'HIV/免疫缺陷 + 南方旅居史 + 脐凹状皮疹。【鉴别】：①粟粒性肺结核：马尔尼菲淋巴结肿大/坏死更明显，有特征性皮疹，血培养/皮损涂片可检出。', 
+                pathology: '【坏死性肉芽肿或化脓性炎】在免疫缺陷（如AIDS）患者中，肉芽肿形成不良，表现为弥漫性坏死性炎症。巨噬细胞（组织细胞）大量聚集，胞浆内充满桑葚状排列的酵母样菌体。这种弥漫性的组织细胞浸润在肺部表现为粟粒样结节、肿块或实变，极易发生坏死空洞化。', 
+                microbiology: '马尔尼菲蓝状菌（Talaromyces marneffei）。温度双相菌：25℃为菌丝相（产红色色素），37℃为酵母相（以裂殖方式繁殖，中间有横隔）。' 
+            },
+
+            // --- 2. 气道与小气道疾病 (Airway / Small Airway) ---
+            { 
+                id: 'dpb', 
+                category: '气道与小气道疾病', 
+                name: '弥漫性泛细支气管炎 (DPB)', 
+                clinicalGeneral: '慢性咳嗽、咳大量脓痰、劳力性呼吸困难。',
+                clinicalSpecific: '既往有慢性鼻窦炎或鼻息肉病史（鼻-支气管综合征）。冷凝集试验阳性。',
+                clinicalContext: '东亚人种。慢性鼻窦炎史。', 
+                earlyStage: '小叶中心结节。', 
+                signs: ['树芽征', '小叶中心结节', '支气管扩张', '空气潴留'], 
+                pearls: '“鼻窦炎+树芽征”。红霉素有效。【鉴别】：①慢性支气管炎：慢支无弥漫性树芽征。②粟粒性肺结核：DPB无全身中毒症状，病程长，有鼻窦炎史。', 
+                pathology: '呼吸性细支气管慢性炎。', 
+                microbiology: '冷凝集+，HLA-B54。' 
+            },
+            { 
+                id: 'constrictive_bronch', 
+                category: '气道与小气道疾病', 
+                name: '缩窄性细支气管炎', 
+                clinicalGeneral: '进行性加重的劳力性呼吸困难、干咳。',
+                clinicalSpecific: '肺功能呈不可逆的阻塞性通气功能障碍。听诊吸气相“爆裂音”或无异常。',
+                clinicalContext: '移植后(BOS)、吸入损伤、类风湿。', 
+                earlyStage: '正常或过度充气。', 
+                signs: ['马赛克灌注', '空气潴留', '支气管扩张', '呼气相CT异常'], 
+                pearls: '呼气相CT见空气潴留是关键。【鉴别】：①哮喘：哮喘为可逆性气流受限，舒张试验阳性。②DPB：缩窄性细支气管炎无大量树芽征，主要是马赛克灌注。', 
+                pathology: '细支气管同心圆纤维化闭塞。', 
+                microbiology: '非感染。' 
+            },
+            { 
+                id: 'infectious_bronch', 
+                category: '气道与小气道疾病', 
+                name: '感染性细支气管炎', 
+                clinicalGeneral: '急性发热、咳嗽、咳痰、喘息。',
+                clinicalSpecific: '多见于儿童（RSV、支原体）。体征可闻及哮鸣音和湿啰音。',
+                clinicalContext: '急慢性感染。', 
+                earlyStage: '树芽。', 
+                signs: ['树芽征', '小叶中心结节', '支气管壁增厚'], 
+                pearls: '直接征象为树芽。【鉴别】：①过敏性肺炎：感染性有发热等感染征，HP有抗原接触史且马赛克灌注更明显。', 
+                pathology: '腔内渗出。', 
+                microbiology: '多种病原体。' 
+            },
+            { 
+                id: 'aspiration_bronch', 
+                category: '气道与小气道疾病', 
+                name: '弥漫性误吸性细支气管炎', 
+                clinicalGeneral: '慢性咳嗽、反复发热、痰鸣音重。',
+                clinicalSpecific: '进食呛咳史。常见于脑卒中、痴呆、卧床患者。',
+                clinicalContext: '吞咽困难、卧床、痴呆。', 
+                earlyStage: '下叶树芽。', 
+                signs: ['树芽征', '小叶中心结节', '支气管扩张', '下叶分布'], 
+                pearls: '长期卧床+双下肺树芽。【鉴别】：①细菌性支气管肺炎：误吸病灶主要在重力依赖区（下叶背段/后基底段），反复发作。', 
+                pathology: '异物巨细胞反应。', 
+                microbiology: '混合菌。' 
+            },
+            { 
+                id: 'rb', 
+                category: '气道与小气道疾病', 
+                name: '呼吸性细支气管炎 (RB)', 
+                clinicalGeneral: '通常无症状，或仅有轻微咳嗽。',
+                clinicalSpecific: '仅见于重度吸烟者。戒烟后可逆。',
+                clinicalContext: '重度吸烟者，无症状或轻咳。', 
+                earlyStage: '上叶GGO小结节。', 
+                signs: ['小叶中心结节', '磨玻璃影', '支气管壁增厚'], 
+                pearls: '吸烟者的上叶微结节。【鉴别】：①RB-ILD：RB症状轻，范围局限；RB-ILD有症状且病变弥漫。②PLCH：LCH有囊肿，RB以磨玻璃结节为主。', 
+                pathology: '巨噬细胞填充RB。', 
+                microbiology: '非感染。' 
+            },
+            { 
+                id: 'follicular', 
+                category: '气道与小气道疾病', 
+                name: '滤泡性细支气管炎', 
+                clinicalGeneral: '慢性咳嗽、进行性呼吸困难、反复呼吸道感染。',
+                clinicalSpecific: '伴随结缔组织病（RA、SS）或免疫缺陷病的表现。',
+                clinicalContext: '类风湿、干燥综合征、免疫缺陷。', 
+                earlyStage: '微结节。', 
+                signs: ['小叶中心结节', '磨玻璃影', '淋巴结肿大'], 
+                pearls: 'CTD患者的双肺微结节。【鉴别】：①LIP：两者常伴发，LIP囊肿更多，滤泡性细支气管炎以结节为主。②淋巴瘤：需病理活检。', 
+                pathology: '淋巴滤泡增生压迫气道。', 
+                microbiology: '非感染。' 
+            },
+            { 
+                id: 'hp', 
+                category: '气道与小气道疾病', 
+                name: '过敏性肺炎 (HP)', 
+                clinicalGeneral: '急性期：接触抗原后4-8h发热、寒战、咳嗽。慢性期：进行性呼吸困难、消瘦。',
+                clinicalSpecific: '脱离环境症状好转，再次接触加重。',
+                clinicalContext: '鸟/霉菌接触史。', 
+                earlyStage: 'GGO+小结节。', 
+                signs: ['小叶中心结节', '磨玻璃影', '马赛克灌注', '空气潴留', '头芝士征'], 
+                pearls: '三密度征（正常、GGO、低密度并存）。【鉴别】：①NSIP：HP有小叶中心结节，呼气相空气潴留，NSIP无。②IPF：HP上叶分布为主，伴马赛克灌注，IPF下叶为主。', 
+                pathology: '肉芽肿性细支气管炎。', 
+                microbiology: '特异性IgG。' 
+            },
+            { 
+                id: 'dipnech', 
+                category: '气道与小气道疾病', 
+                name: 'DIPNECH', 
+                clinicalGeneral: '长期干咳、喘息、活动后气促。',
+                clinicalSpecific: '常被误诊为哮喘，但支气管舒张剂治疗效果不佳。',
+                clinicalContext: '中年女性，长期干咳/喘息。', 
+                earlyStage: '小结节。', 
+                signs: ['多发小结节', '马赛克灌注', '支气管扩张', '类癌'], 
+                pearls: '长期误诊为哮喘的中年女性+多发小结节。【鉴别】：①转移瘤：DIPNECH病程极长，结节数年不变或生长极慢。②小气道疾病：结合类癌结节可鉴别。', 
+                pathology: '神经内分泌细胞增生。', 
+                microbiology: '非感染。' 
+            },
+            { 
+                id: 'swyer_james', 
+                category: '气道与小气道疾病', 
+                name: 'Swyer-James-Macleod综合征', 
+                clinicalGeneral: '无症状，或有反复呼吸道感染、劳力性气促。',
+                clinicalSpecific: '有幼年重症肺炎（麻疹、腺病毒）病史。',
+                clinicalContext: '儿童期重症肺炎史。', 
+                earlyStage: '单侧透亮。', 
+                signs: ['单侧肺透亮度增加', '肺体积缩小', '支气管扩张', '马赛克灌注'], 
+                pearls: '单侧“小而黑”的肺。【鉴别】：①气道异物：SJS有明确感染史，患侧肺血管细小。②先天性肺发育不全：SJS支气管树发育正常但细支气管闭塞。', 
+                pathology: '感染后细支气管闭塞+肺发育不良。', 
+                microbiology: '非感染。' 
+            },
+
+            // --- 3. 尘肺与职业性 (Pneumoconiosis / Occupational) ---
+            { 
+                id: 'silicosis', 
+                category: '尘肺与职业性', 
+                name: '矽肺/煤工尘肺', 
+                clinicalGeneral: '早期无症状。随病情进展出现咳嗽、咳痰、胸痛、气促。',
+                clinicalSpecific: '明确的二氧化硅粉尘接触史。易并发肺结核（矽肺结核）。',
+                clinicalContext: '粉尘接触史（矿工/石匠）。', 
+                earlyStage: '上叶小结节。', 
+                signs: ['小叶中心结节', '融合团块', '蛋壳样钙化', '肺气肿'], 
+                pearls: '上叶为主小结节+肺门淋巴结蛋壳钙化。【鉴别】：①结节病：矽肺有职业史，结节硬（钙化），结节病多为非干酪样肉芽肿。②血行转移瘤：矽肺上叶分布为主，转移瘤下叶为主。', 
+                pathology: '硅结节，纤维化。', 
+                microbiology: '非感染。' 
+            },
+            { 
+                id: 'asbestosis', 
+                category: '尘肺与职业性', 
+                name: '石棉肺', 
+                clinicalGeneral: '隐匿起病，活动后气短、干咳、胸痛。',
+                clinicalSpecific: '双下肺底捻发音，杵状指。胸膜受累明显。',
+                clinicalContext: '石棉接触（建筑/造船）。', 
+                earlyStage: '胸膜斑。', 
+                signs: ['胸膜斑', '胸膜钙化', '胸膜下线', '蜂窝征', '带状实变'], 
+                pearls: '胸膜斑（特别是膈胸膜钙化）+ 下肺纤维化。【鉴别】：①IPF：石棉肺有胸膜斑，且有石棉接触史，IPF通常无胸膜病变。', 
+                pathology: '石棉小体，间质纤维化。', 
+                microbiology: '非感染。' 
+            },
+            { 
+                id: 'talcosis', 
+                category: '尘肺与职业性', 
+                name: '滑石肺/赋形剂肺病', 
+                clinicalGeneral: '进行性呼吸困难、干咳。',
+                clinicalSpecific: '眼底检查可见滑石颗粒（视网膜微栓塞）。',
+                clinicalContext: '静脉吸毒（注射片剂）或滑石粉接触。', 
+                earlyStage: '弥漫微结节。', 
+                signs: ['弥漫性小结节', '融合团块', '高密度沉积', '磨玻璃影'], 
+                pearls: '静脉吸毒史+双肺弥漫高密度微结节。【鉴别】：①粟粒性肺结核：滑石肺结节密度极高（滑石成分），有静脉吸毒史。', 
+                pathology: '异物肉芽肿。', 
+                microbiology: '非感染。' 
+            },
+
+            // --- 4. 肿瘤性疾病 (Neoplastic) ---
+            { 
+                id: 'ima', 
+                category: '肿瘤性疾病', 
+                name: '浸润性黏液腺癌', 
+                clinicalGeneral: '咳嗽、气促、发热（常被误诊为肺炎）。',
+                clinicalSpecific: '咳大量白色泡沫痰（咸味，支气管漏）。抗生素治疗无效。',
+                clinicalContext: '咳大量白色泡沫痰（咸味）。', 
+                earlyStage: '肺炎样实变。', 
+                signs: ['实变', '磨玻璃影', '空气支气管征', '血管造影征', '多灶性分布'], 
+                pearls: '“久治不愈的肺炎”+“血管造影征”。【鉴别】：①大叶性肺炎：IMA抗炎无效，病变持续存在或缓慢进展，增强扫描见血管造影征。②机化性肺炎：IMA病灶不游走，且呈进行性。', 
+                pathology: '肿瘤细胞沿肺泡壁生长，产黏液。', 
+                microbiology: '病理确诊。' 
+            },
+            { 
+                id: 'lymphangitis', 
+                category: '肿瘤性疾病', 
+                name: '癌性淋巴管炎', 
+                clinicalGeneral: '极度严重的呼吸困难、干咳。',
+                clinicalSpecific: '呼吸困难程度与胸片/CT影像不成比例。进行性加重。',
+                clinicalContext: '已知恶性肿瘤病史（乳腺/胃/肺）。', 
+                earlyStage: '间质增厚。', 
+                signs: ['小叶间隔增厚', '支气管血管束增粗', '多边形网格', '胸腔积液'], 
+                pearls: '串珠样/结节样小叶间隔增厚，常不对称。【鉴别】：①肺水肿：癌性淋巴管炎间隔增厚不均匀（串珠样），无心衰表现，利尿无效。②结节病：结节病结节分布更均匀，病情相对良性。', 
+                pathology: '淋巴管内癌栓。', 
+                microbiology: '细胞学。' 
+            },
+            { 
+                id: 'mets_hema', 
+                category: '肿瘤性疾病', 
+                name: '血行转移瘤', 
+                clinicalGeneral: '早期多无症状。晚期有咳嗽、咯血、呼吸困难。',
+                clinicalSpecific: '原发肿瘤的症状。',
+                clinicalContext: '原发瘤史。', 
+                earlyStage: '多发小结节。', 
+                signs: ['多发结节', '大小不一', '随机分布', '供养血管征', '晕征(出血)'], 
+                pearls: '肺底、外带为主，随机分布的圆球形结节。【鉴别】：①肉芽肿性疾病：转移瘤边缘光整，随机分布，大小不一，无卫星灶。', 
+                pathology: '癌栓栓塞毛细血管。', 
+                microbiology: '病理。' 
+            },
+            { 
+                id: 'lam', 
+                category: '肿瘤性疾病', 
+                name: '淋巴管平滑肌瘤病 (LAM)', 
+                clinicalGeneral: '活动后气促、咳嗽。',
+                clinicalSpecific: '反复发作的气胸、乳糜胸。咯血。',
+                clinicalContext: '育龄期女性。结节性硬化症(TSC)。', 
+                earlyStage: '薄壁囊肿。', 
+                signs: ['弥漫性薄壁囊肿', '乳糜胸', '气胸', '正常肺实质'], 
+                pearls: '全肺弥漫分布的圆形囊肿，无结节。【鉴别】：①PLCH：LAM囊肿圆，分布均匀，无结节；LCH囊肿不规则，上叶为主，伴结节。②肺气肿：LAM有明确囊壁，肺气肿无壁。', 
+                pathology: '平滑肌样细胞增生，阻塞气道。', 
+                microbiology: 'VEGF-D升高。' 
+            },
+
+            // --- 5. 间质性肺炎 (ILD) ---
+            { 
+                id: 'ipf', 
+                category: '间质性肺炎', 
+                name: '特发性肺纤维化 (IPF)', 
+                clinicalGeneral: '隐匿起病，进行性加重的呼吸困难，干咳。',
+                clinicalSpecific: '双下肺爆裂音（Velcro啰音），杵状指（趾）。',
+                clinicalContext: '老年男性，吸烟。干咳，Velcro啰音。', 
+                earlyStage: '胸膜下网格。', 
+                signs: ['蜂窝征', '牵拉性支扩', '网格影', '基底/胸膜下分布'], 
+                pearls: 'UIP型：蜂窝+基底部+无磨玻璃。【鉴别】：①NSIP：IPF以蜂窝为主，无磨玻璃，基底分布；NSIP以磨玻璃为主，胸膜下保留。②慢性过敏性肺炎：HP有小叶中心结节，马赛克灌注。', 
+                pathology: 'UIP。时空异质性。', 
+                microbiology: '排除法。' 
+            },
+            { 
+                id: 'nsip', 
+                category: '间质性肺炎', 
+                name: '非特异性间质性肺炎', 
+                clinicalGeneral: '亚急性或慢性起病，呼吸困难、咳嗽。',
+                clinicalSpecific: '常伴有结缔组织病（如硬皮病、肌炎）的全身表现。',
+                clinicalContext: '中年女性，CTD背景。', 
+                earlyStage: 'GGO。', 
+                signs: ['磨玻璃影', '网格影', '牵拉性支扩', '胸膜下保留征'], 
+                pearls: '主要为GGO，特征性“胸膜下保留”。【鉴别】：①UIP（IPF）：NSIP磨玻璃影显著，少见蜂窝，有胸膜下保留征。②机化性肺炎（COP）：COP多为实变，NSIP为间质改变。', 
+                pathology: '均一时相的炎症/纤维化。', 
+                microbiology: '排除法。' 
+            },
+            { 
+                id: 'cop', 
+                category: '间质性肺炎', 
+                name: '隐源性机化性肺炎 (COP)', 
+                clinicalGeneral: '亚急性起病，类似流感样症状（发热、咳嗽、乏力）。',
+                clinicalSpecific: '多种抗生素治疗无效，使用皮质类固醇后迅速缓解。',
+                clinicalContext: '亚急性，抗生素无效。', 
+                earlyStage: '游走性实变。', 
+                signs: ['反晕征', '实变', '游走性阴影', '胸膜下分布'], 
+                pearls: '游走性实变 + 反晕征。【鉴别】：①慢性嗜酸性肺炎（CEP）：两者影像极似，均对激素敏感，CEP外周血嗜酸粒细胞显著升高。②肺腺癌：COP病灶具有游走性，腺癌无。', 
+                pathology: 'Masson小体。', 
+                microbiology: '排除法。' 
+            },
+            { 
+                id: 'lip', 
+                category: '间质性肺炎', 
+                name: '淋巴细胞间质性肺炎 (LIP)', 
+                clinicalGeneral: '缓慢进展的呼吸困难、咳嗽。',
+                clinicalSpecific: '常伴有干燥综合征（口干眼干）、HIV感染或巨球蛋白血症。',
+                clinicalContext: '干燥综合征、HIV。', 
+                earlyStage: 'GGO。', 
+                signs: ['磨玻璃影', '薄壁囊肿', '小叶中心结节', '血管周囊肿'], 
+                pearls: 'GGO背景下的血管周围囊肿。【鉴别】：①LAM：LIP有磨玻璃背景和小叶中心结节，LAM囊肿分布均匀无结节。②PCP：LIP病程更慢，囊肿主要在血管旁。', 
+                pathology: '间质淋巴细胞浸润。', 
+                microbiology: '排除法。' 
+            },
+
+            // --- 6. 自身免疫性疾病 (Autoimmune) ---
+            { 
+                id: 'ra', 
+                category: '自身免疫性疾病', 
+                name: '类风湿关节炎肺病', 
+                clinicalGeneral: '关节痛、晨僵、呼吸困难。',
+                clinicalSpecific: '皮下类风湿结节。肺部受累可在关节症状之前或之后出现。',
+                clinicalContext: '关节炎病史。', 
+                earlyStage: 'UIP或NSIP样。', 
+                signs: ['蜂窝征', '网格影', '实变', '坏死性结节', '胸腔积液'], 
+                pearls: 'UIP型最常见，可伴类风湿结节（空洞）。【鉴别】：①IPF：RA-ILD有明确关节炎病史和类风湿因子阳性，IPF排除已知原因。', 
+                pathology: '多种ILD模式。', 
+                microbiology: 'RF+, CCP+。' 
+            },
+            { 
+                id: 'gpa', 
+                category: '自身免疫性疾病', 
+                name: '肉芽肿性多血管炎 (GPA)', 
+                clinicalGeneral: '发热、乏力、体重下降。',
+                clinicalSpecific: '典型的“三联征”：上呼吸道（脓涕、鼻窦炎、鞍鼻）、下呼吸道（咳嗽、咯血）、肾脏（血尿、蛋白尿）。',
+                clinicalContext: '鼻窦炎，肾衰。', 
+                earlyStage: '结节。', 
+                signs: ['多发空洞结节', '实变', '供养血管征', '气道狭窄'], 
+                pearls: '多发空洞+ANCA。【鉴别】：①金葡菌肺炎：GPA空洞壁厚薄不均，病程长，无急性化脓表现。②转移瘤：GPA多为空洞，伴肾损害和鼻窦炎。', 
+                pathology: '坏死性肉芽肿血管炎。', 
+                microbiology: 'c-ANCA+。' 
+            },
+
+            // --- 7. 血管性/水肿/误吸 (Vascular/Edema/Misc) ---
+            { 
+                id: 'edema', 
+                category: '血管性/水肿/误吸', 
+                name: '肺水肿 (心源性)', 
+                clinicalGeneral: '端坐呼吸、夜间阵发性呼吸困难、粉红色泡沫痰。',
+                clinicalSpecific: '双肺底湿啰音，奔马律，颈静脉怒张。',
+                clinicalContext: '心衰，容量超负荷。', 
+                earlyStage: '间隔增厚。', 
+                signs: ['蝶翼征', '磨玻璃影', '小叶间隔增厚', '胸腔积液', '心脏增大'], 
+                pearls: '中心分布（蝶翼），重力依赖，治疗后迅速吸收。【鉴别】：①ARDS：心源性有心脏增大，上肺血管增粗，利尿有效。②PCP：肺水肿间隔光滑，PCP无心衰。', 
+                pathology: '静水压升高致渗出。', 
+                microbiology: 'BNP升高。' 
+            },
+            { 
+                id: 'aspiration', 
+                category: '血管性/水肿/误吸', 
+                name: '误吸相关性疾病', 
+                clinicalGeneral: '慢性咳嗽、反复发热、痰鸣音重。',
+                clinicalSpecific: '进食呛咳。常见于脑卒中、吞咽困难、长期卧床者。',
+                clinicalContext: '吞咽障碍。', 
+                earlyStage: '下叶后段实变。', 
+                signs: ['下叶实变', '树芽征', '小叶中心结节', '支扩'], 
+                pearls: '重力依赖区（下叶背段/后基底段）。【鉴别】：①细菌性肺炎：误吸病灶位置随体位改变（卧床者在背段），反复发生。', 
+                pathology: '化学性/感染性炎症。', 
+                microbiology: '混合菌。' 
+            },
+
+            // --- 8. 代谢/罕见/遗传 (Metabolic/Genetic/Rare) ---
+            { 
+                id: 'pap', 
+                category: '代谢/罕见/遗传', 
+                name: '肺泡蛋白沉积症 (PAP)', 
+                clinicalGeneral: '隐匿起病，渐进性呼吸困难，轻咳。',
+                clinicalSpecific: '咳白色泡沫痰或块状痰。症状与影像不匹配（影像重症状轻）。',
+                clinicalContext: '气促，咳白色泡沫痰。', 
+                earlyStage: '地图状GGO。', 
+                signs: ['铺路石征', '磨玻璃影', '地图样分布', '实变'], 
+                pearls: '典型的“地图样铺路石征”。【鉴别】：①肺水肿：PAP病程慢，无心衰，地图样分布清晰；肺水肿为蝶翼状，利尿有效。②PCP：PAP无发热，PCP有发热且多见于免疫抑制者。', 
+                pathology: '肺泡内脂蛋白沉积(表面活性物质)。', 
+                microbiology: 'GM-CSF抗体。' 
+            },
+            { 
+                id: 'pam', 
+                category: '代谢/罕见/遗传', 
+                name: '肺泡微石症 (PAM)', 
+                clinicalGeneral: '常无症状，体检发现。晚期可有呼吸困难。',
+                clinicalSpecific: '家族聚集性。病程极长，影像极其严重但症状轻微。',
+                clinicalContext: '家族史。症状与影像分离。', 
+                earlyStage: '弥漫微结节。', 
+                signs: ['沙暴征', '钙化微结节', '小叶间隔增厚', '胸膜下钙化'], 
+                pearls: '“沙暴征” (Sandstorm)，沿胸膜下分布的钙化。【鉴别】：①粟粒性结核：PAM结节密度极高（钙化），病程极长，无中毒症状。', 
+                pathology: '肺泡内磷酸钙微结石。', 
+                microbiology: 'SLC34A2突变。' 
+            },
+            { 
+                id: 'lcdd', 
+                category: '代谢/罕见/遗传', 
+                name: '轻链沉积病', 
+                clinicalGeneral: '呼吸困难、蛋白尿。',
+                clinicalSpecific: '伴有多发性骨髓瘤或巨球蛋白血症的表现。',
+                clinicalContext: '浆细胞病/骨髓瘤。', 
+                earlyStage: '囊肿/结节。', 
+                signs: ['薄壁囊肿', '多发结节', '淋巴结肿大', '支扩'], 
+                pearls: '弥漫性囊肿 + 肾脏病变。【鉴别】：①PLCH：LCDD有浆细胞病基础，囊肿+结节。', 
+                pathology: '轻链蛋白沉积。', 
+                microbiology: '病理。' 
+            },
+            { 
+                id: 'bhd', 
+                category: '代谢/罕见/遗传', 
+                name: 'Birt-Hogg-Dubé综合征', 
+                clinicalGeneral: '反复自发性气胸。',
+                clinicalSpecific: '面部纤维毛囊瘤（白色小丘疹），肾肿瘤。',
+                clinicalContext: '家族史，气胸，肾癌，皮疹。', 
+                earlyStage: '基底囊肿。', 
+                signs: ['多发囊肿', '基底部分布', '近纵隔分布', '透亮'], 
+                pearls: '双肺底、贴近纵隔的囊肿，形状不规则。【鉴别】：①LAM：BHD囊肿主要在基底部和纵隔旁，LAM弥漫全肺。②LCH：BHD囊肿分布和形态特异，有皮肤/肾脏表现。', 
+                pathology: 'FLCN基因突变。', 
+                microbiology: '基因检测。' 
+            },
+            { 
+                id: 'lch', 
+                category: '代谢/罕见/遗传', 
+                name: '朗格汉斯细胞组织细胞增生症 (PLCH)', 
+                clinicalGeneral: '干咳、呼吸困难，或无症状。',
+                clinicalSpecific: '几乎均为年轻吸烟者。可伴有尿崩症（垂体受累）、骨痛。',
+                clinicalContext: '年轻吸烟者。', 
+                earlyStage: '结节。', 
+                signs: ['多发结节', '空洞性结节', '不规则囊肿', '上叶分布'], 
+                pearls: '结节与囊肿并存，肋膈角豁免。【鉴别】：①LAM：LCH为上叶为主，结节演变为囊肿；LAM弥漫分布。②BHD：LCH囊肿形态不规则，有吸烟史。', 
+                pathology: 'LCH细胞浸润。', 
+                microbiology: 'BRAF突变。' 
+            }
+        ];
+
+        // --- Logic ---
+        // Auto-extract ALL unique signs for the filter list
+        const ALL_SIGNS = Array.from(new Set(FULL_DATABASE.flatMap(d => d.signs))).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+
+        const calculateMatches = (selectedSigns) => {
+            if (selectedSigns.length === 0) return [];
+            
+            return FULL_DATABASE.map(disease => {
+                const matchedSigns = disease.signs.filter(sign => selectedSigns.includes(sign));
+                const score = matchedSigns.length;
+                const matchPercentage = Math.round((matchedSigns.length / selectedSigns.length) * 100);
+                
+                return { ...disease, score, matchedSigns, matchPercentage };
+            })
+            .filter(d => d.score > 0)
+            .sort((a, b) => {
+                if (b.score !== a.score) return b.score - a.score;
+                return b.matchPercentage - a.matchPercentage;
+            });
+        };
+
+        function InfectiousLungID() {
+            const [activeTab, setActiveTab] = useState('diff'); 
+            const [selectedSigns, setSelectedSigns] = useState([]);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [encyclopediaSearch, setEncyclopediaSearch] = useState('');
+            const [signSearch, setSignSearch] = useState('');
+            const [selectedDisease, setSelectedDisease] = useState(null);
+            const [selectedSignDetail, setSelectedSignDetail] = useState(null);
+            const [diseaseImages, setDiseaseImages] = useState({}); // { [diseaseId]: [{id, data, timestamp}] }
+            const [previewImage, setPreviewImage] = useState(null);
+            const [isUploading, setIsUploading] = useState(false);
+            const [expandedCysticId, setExpandedCysticId] = useState(null);
+            const [expandedCavityId, setExpandedCavityId] = useState(null);
+            const [splashActive, setSplashActive] = useState(true);
+            const [splashFading, setSplashFading] = useState(false);
+            const detailsRef = useRef(null); 
+            const signDetailsRef = useRef(null);
+            const fileInputRef = useRef(null);
+
+            // Splash Screen Logic
+            useEffect(() => {
+                // Start fade out after 2.5s
+                const timer1 = setTimeout(() => setSplashFading(true), 2500);
+                // Remove from DOM after 3.2s
+                const timer2 = setTimeout(() => setSplashActive(false), 3200);
+                return () => { clearTimeout(timer1); clearTimeout(timer2); };
+            }, []);
+
+            // Load images from IndexedDB when selectedDisease changes
+            useEffect(() => {
+                if (selectedDisease) {
+                    dbService.getImages(selectedDisease.id).then(images => {
+                        setDiseaseImages(prev => ({
+                            ...prev,
+                            [selectedDisease.id]: images
+                        }));
+                    }).catch(err => console.error("Failed to load images", err));
+                }
+            }, [selectedDisease]);
+
+            const toggleSign = (sign) => {
+                setSelectedSigns(prev => prev.includes(sign) ? prev.filter(s => s !== sign) : [...prev, sign]);
+            };
+
+            const toggleCysticCard = (id) => {
+                setExpandedCysticId(prev => prev === id ? null : id);
+            };
+
+            const toggleCavityCard = (id) => {
+                setExpandedCavityId(prev => prev === id ? null : id);
+            };
+
+            const handleDiseaseClick = (disease) => {
+                setSelectedDisease(disease);
+                if (window.innerWidth < 1024) setTimeout(() => detailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+            };
+
+            const handleSignClick = (sign) => {
+                setSelectedSignDetail(sign);
+                if (window.innerWidth < 1024) setTimeout(() => signDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+            };
+
+            const handleImageUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file || !selectedDisease) return;
+
+                setIsUploading(true);
+                try {
+                    // 1. Compress
+                    const compressedDataUrl = await compressImage(file);
+                    
+                    // 2. Save to IndexedDB
+                    const newImageRecord = await dbService.addImage(selectedDisease.id, compressedDataUrl);
+                    
+                    // 3. Update State
+                    setDiseaseImages(prev => ({
+                        ...prev,
+                        [selectedDisease.id]: [...(prev[selectedDisease.id] || []), newImageRecord]
+                    }));
+                } catch (error) {
+                    alert("图片处理失败，请重试。" + error.message);
+                    console.error(error);
+                } finally {
+                    setIsUploading(false);
+                    e.target.value = ''; // Reset input
+                }
+            };
+
+            const handleDeleteImage = async (id, index) => {
+                if (!selectedDisease) return;
+                if (!window.confirm("确定要删除这张图片吗？")) return;
+
+                try {
+                    await dbService.deleteImage(id);
+                    
+                    setDiseaseImages(prev => ({
+                        ...prev,
+                        [selectedDisease.id]: prev[selectedDisease.id].filter((_, i) => i !== index)
+                    }));
+
+                    // If deleting the currently previewed image, close the preview
+                    // logic needs to check if preview is currently open and is this specific image
+                    setPreviewImage(null); 
+                } catch (error) {
+                    console.error("Delete failed", error);
+                    alert("删除失败");
+                }
+            };
+
+            const diagnosisResults = useMemo(() => calculateMatches(selectedSigns), [selectedSigns]);
+
+            const filteredDiseases = useMemo(() => {
+                if (!encyclopediaSearch) return FULL_DATABASE;
+                return FULL_DATABASE.filter(d => 
+                    d.name.toLowerCase().includes(encyclopediaSearch.toLowerCase()) || 
+                    d.signs.some(s => s.includes(encyclopediaSearch))
+                );
+            }, [encyclopediaSearch]);
+
+            const groupedDiseases = useMemo(() => {
+                const groups = {};
+                filteredDiseases.forEach(d => {
+                    if (!groups[d.category]) groups[d.category] = [];
+                    groups[d.category].push(d);
+                });
+                return groups;
+            }, [filteredDiseases]);
+
+            const filteredSigns = useMemo(() => {
+                if (!signSearch) return CT_SIGNS_DATABASE;
+                return CT_SIGNS_DATABASE.filter(s => s.name.toLowerCase().includes(signSearch.toLowerCase()));
+            }, [signSearch]);
+
+            return (
+                <div className="min-h-screen bg-gray-50 text-slate-800 font-sans pb-safe relative">
+                    
+                    {/* --- SPLASH SCREEN --- */}
+                    {splashActive && (
+                        <div className={`fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 flex flex-col items-center justify-center text-white transition-opacity duration-700 ease-out ${splashFading ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+                            <div className="flex flex-col items-center animate-float-up">
+                                <div className="mb-8 relative">
+                                    <div className="absolute inset-0 bg-indigo-500 rounded-full blur-3xl opacity-20 animate-pulse-slow"></div>
+                                    <div className="relative bg-white/10 p-6 rounded-3xl border border-white/10 shadow-2xl backdrop-blur-sm">
+                                        <Scan className="h-16 w-16 text-indigo-300" strokeWidth={1.5} />
+                                    </div>
+                                </div>
+                                <h1 className="text-3xl font-extrabold tracking-tight mb-2 bg-gradient-to-r from-white to-indigo-200 bg-clip-text text-transparent">
+                                    胸部CT分析助手
+                                </h1>
+                                <p className="text-sm font-medium text-indigo-200/80 tracking-[0.2em] uppercase animate-float-up-delay">
+                                    你的临床好帮手
+                                </p>
+                            </div>
+                            
+                            <div className="absolute bottom-10 text-xs text-slate-500 font-medium tracking-wide">
+                                Designed by <span className="text-slate-400">@一路向北</span>
+                            </div>
+                        </div>
+                    )}
+                    {/* --- END SPLASH SCREEN --- */}
+
+                    {/* Header */}
+                    <header className="bg-white/90 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
+                        <div className="max-w-7xl mx-auto px-4 py-3">
+                            <div className="flex items-center space-x-2.5">
+                                <div className="bg-indigo-600 p-1.5 rounded-lg shadow-md shadow-indigo-200/50"><Bug className="h-5 w-5 text-white" /></div>
+                                <div><h1 className="text-lg font-bold text-gray-900 leading-tight">CT分析助手</h1><p className="text-[10px] text-indigo-600 font-medium leading-none">专业版 V2.9</p></div>
+                            </div>
+                        </div>
+                    </header>
+                    
+                    {/* Main Content */}
+                    <main className="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
+                        {/* Navigation Tabs */}
+                        <div className="flex justify-center mb-6 sticky top-[60px] z-40 lg:static lg:top-0">
+                            <div className="bg-white/95 backdrop-blur shadow-sm p-1 rounded-xl flex w-full max-w-2xl border border-gray-100 overflow-x-auto no-scrollbar">
+                                <button onClick={() => setActiveTab('diff')} className={`flex-1 min-w-[90px] flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-lg text-sm font-semibold transition-all duration-200 ${activeTab === 'diff' ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-100' : 'text-gray-500 hover:text-gray-700'}`}><Stethoscope className="h-4 w-4" /><span className="whitespace-nowrap">智能鉴别</span></button>
+                                <button onClick={() => setActiveTab('cystic')} className={`flex-1 min-w-[90px] flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-lg text-sm font-semibold transition-all duration-200 ${activeTab === 'cystic' ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-100' : 'text-gray-500 hover:text-gray-700'}`}><Aperture className="h-4 w-4" /><span className="whitespace-nowrap">囊腔鉴别</span></button>
+                                <button onClick={() => setActiveTab('cavity')} className={`flex-1 min-w-[90px] flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-lg text-sm font-semibold transition-all duration-200 ${activeTab === 'cavity' ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-100' : 'text-gray-500 hover:text-gray-700'}`}><Circle className="h-4 w-4" /><span className="whitespace-nowrap">空洞鉴别</span></button>
+                                <button onClick={() => { setActiveTab('encyclopedia'); setSelectedDisease(null); }} className={`flex-1 min-w-[90px] flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-lg text-sm font-semibold transition-all duration-200 ${activeTab === 'encyclopedia' ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-100' : 'text-gray-500 hover:text-gray-700'}`}><BookOpen className="h-4 w-4" /><span className="whitespace-nowrap">疾病百科</span></button>
+                                <button onClick={() => { setActiveTab('signs'); setSelectedSignDetail(null); }} className={`flex-1 min-w-[90px] flex items-center justify-center space-x-1.5 py-2.5 px-2 rounded-lg text-sm font-semibold transition-all duration-200 ${activeTab === 'signs' ? 'bg-indigo-50 text-indigo-700 shadow-sm ring-1 ring-indigo-100' : 'text-gray-500 hover:text-gray-700'}`}><Eye className="h-4 w-4" /><span className="whitespace-nowrap">征象库</span></button>
+                            </div>
+                        </div>
+
+                        {/* View: Cystic Diff (Accordion Style - Optimized for Mobile) */}
+                        {activeTab === 'cystic' && (
+                            <div className="space-y-4 px-1 pb-20 animate-fade-in">
+                                <div className="mb-4 px-2">
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center"><Aperture className="h-6 w-6 mr-2 text-indigo-500" />肺部多发囊腔性病变鉴别</h2>
+                                    <p className="text-sm text-gray-500 mt-1">针对 PLCH, BHD, LIP, LAM 等常见囊腔病变的系统性对比</p>
+                                </div>
+                                
+                                <div className="space-y-3">
+                                    {CYSTIC_DIFF_DATA.map(item => {
+                                        const isExpanded = expandedCysticId === item.id;
+                                        return (
+                                            <div key={item.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all duration-300">
+                                                <button 
+                                                    onClick={() => toggleCysticCard(item.id)}
+                                                    className="w-full text-left p-4 flex items-start justify-between bg-white active:bg-gray-50 transition-colors"
+                                                >
+                                                    <div className="flex-1 pr-4">
+                                                        <h3 className={`font-bold text-lg leading-tight mb-2 ${isExpanded ? 'text-indigo-600' : 'text-gray-800'}`}>
+                                                            {item.name}
+                                                        </h3>
+                                                        <div className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-lg font-medium border border-indigo-100/50">
+                                                            <span className="mr-1">💡</span> {item.key}
+                                                        </div>
+                                                    </div>
+                                                    <div className={`mt-1 p-1 rounded-full bg-gray-50 text-gray-400 transition-transform duration-300 ${isExpanded ? 'rotate-180 bg-indigo-50 text-indigo-500' : ''}`}>
+                                                        <ChevronDown className="h-5 w-5" />
+                                                    </div>
+                                                </button>
+                                                
+                                                {/* Expanded Content */}
+                                                <div className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${isExpanded ? 'max-h-[800px]' : 'max-h-0'}`}>
+                                                    <div className="p-4 pt-0 bg-white border-t border-dashed border-gray-100 text-sm text-gray-600 space-y-4">
+                                                        {/* Details grid */}
+                                                        <div className="grid grid-cols-1 gap-3 mt-3">
+                                                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1 flex items-center"><User className="h-3 w-3 mr-1" />人群 / 背景</span>
+                                                                <p className="text-slate-800 font-medium">{item.epidemiology}</p>
+                                                            </div>
+                                                            <div className="flex gap-3">
+                                                                <div className="flex-1 bg-blue-50/50 p-3 rounded-xl border border-blue-100/50">
+                                                                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider block mb-1">囊腔特征</span>
+                                                                    <p className="text-slate-800 leading-snug">{item.cystFeatures}</p>
+                                                                </div>
+                                                                <div className="flex-1 bg-blue-50/50 p-3 rounded-xl border border-blue-100/50">
+                                                                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider block mb-1">分布</span>
+                                                                    <p className="text-slate-800 leading-snug">{item.distribution}</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100/50">
+                                                                <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block mb-1 flex items-center"><Activity className="h-3 w-3 mr-1" />伴随征象</span>
+                                                                <p className="text-slate-800">{item.ctSigns}</p>
+                                                            </div>
+                                                            <div className="bg-purple-50/30 p-3 rounded-xl border border-purple-100/30">
+                                                                <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider block mb-1 flex items-center"><Microscope className="h-3 w-3 mr-1" />病理机制</span>
+                                                                <p className="text-slate-600 italic text-xs leading-relaxed text-justify">{item.mechanism}</p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="mt-6 mx-2 p-4 bg-yellow-50 rounded-xl border border-yellow-100 text-sm text-yellow-800 shadow-sm">
+                                    <span className="font-bold block mb-1 flex items-center"><Info className="h-4 w-4 mr-1.5" /> 快速诊断口诀：</span> 
+                                    囊腔鉴别看“形态”与“分布”。年轻吸烟者首选PLCH（怪异囊），育龄女性首选LAM（圆囊），基底/纵隔旁囊肿警惕BHD（家族史）。
+                                </div>
+                            </div>
+                        )}
+
+                        {/* View: Cavity Diff (Accordion Style - NEW) */}
+                        {activeTab === 'cavity' && (
+                            <div className="space-y-4 px-1 pb-20 animate-fade-in">
+                                <div className="mb-4 px-2">
+                                    <h2 className="text-xl font-bold text-gray-900 flex items-center"><Circle className="h-6 w-6 mr-2 text-indigo-500" />肺部空洞病变鉴别</h2>
+                                    <p className="text-sm text-gray-500 mt-1">针对肺癌、肺结核、肺脓肿、GPA等常见空洞病变的影像学鉴别</p>
+                                </div>
+                                
+                                <div className="space-y-3">
+                                    {CAVITY_DIFF_DATA.map(item => {
+                                        const isExpanded = expandedCavityId === item.id;
+                                        return (
+                                            <div key={item.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden transition-all duration-300">
+                                                <button 
+                                                    onClick={() => toggleCavityCard(item.id)}
+                                                    className="w-full text-left p-4 flex items-start justify-between bg-white active:bg-gray-50 transition-colors"
+                                                >
+                                                    <div className="flex-1 pr-4">
+                                                        <h3 className={`font-bold text-lg leading-tight mb-2 ${isExpanded ? 'text-indigo-600' : 'text-gray-800'}`}>
+                                                            {item.name}
+                                                        </h3>
+                                                        <div className="inline-flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs rounded-lg font-medium border border-indigo-100/50">
+                                                            <span className="mr-1">💡</span> {item.key}
+                                                        </div>
+                                                    </div>
+                                                    <div className={`mt-1 p-1 rounded-full bg-gray-50 text-gray-400 transition-transform duration-300 ${isExpanded ? 'rotate-180 bg-indigo-50 text-indigo-500' : ''}`}>
+                                                        <ChevronDown className="h-5 w-5" />
+                                                    </div>
+                                                </button>
+                                                
+                                                {/* Expanded Content */}
+                                                <div className={`overflow-hidden transition-[max-height] duration-300 ease-in-out ${isExpanded ? 'max-h-[800px]' : 'max-h-0'}`}>
+                                                    <div className="p-4 pt-0 bg-white border-t border-dashed border-gray-100 text-sm text-gray-600 space-y-4">
+                                                        {/* Details grid */}
+                                                        <div className="grid grid-cols-1 gap-3 mt-3">
+                                                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1 flex items-center"><User className="h-3 w-3 mr-1" />人群 / 背景</span>
+                                                                <p className="text-slate-800 font-medium">{item.epidemiology}</p>
+                                                            </div>
+                                                            <div className="flex gap-3">
+                                                                <div className="flex-1 bg-blue-50/50 p-3 rounded-xl border border-blue-100/50">
+                                                                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider block mb-1">空洞特征</span>
+                                                                    <p className="text-slate-800 leading-snug">{item.cavityFeatures}</p>
+                                                                </div>
+                                                                <div className="flex-1 bg-blue-50/50 p-3 rounded-xl border border-blue-100/50">
+                                                                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wider block mb-1">分布</span>
+                                                                    <p className="text-slate-800 leading-snug">{item.distribution}</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-100/50">
+                                                                <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block mb-1 flex items-center"><Activity className="h-3 w-3 mr-1" />伴随征象</span>
+                                                                <p className="text-slate-800">{item.ctSigns}</p>
+                                                            </div>
+                                                            <div className="bg-purple-50/30 p-3 rounded-xl border border-purple-100/30">
+                                                                <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider block mb-1 flex items-center"><Microscope className="h-3 w-3 mr-1" />病理机制</span>
+                                                                <p className="text-slate-600 italic text-xs leading-relaxed text-justify">{item.mechanism}</p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="mt-6 mx-2 p-4 bg-yellow-50 rounded-xl border border-yellow-100 text-sm text-yellow-800 shadow-sm">
+                                    <span className="font-bold block mb-1 flex items-center"><Info className="h-4 w-4 mr-1.5" /> 鉴别要点：</span> 
+                                    重点关注“壁厚”、“内壁光滑度”及“伴随征象”。偏心厚壁+内壁不整提示肺癌；周围卫星灶提示结核；气液平提示脓肿。
+                                </div>
+                            </div>
+                        )}
+
+                        {/* View: Smart Diff */}
+                        {activeTab === 'diff' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-8 animate-fade-in">
+                                <div className="lg:col-span-5 space-y-4">
+                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 lg:p-6 lg:sticky lg:top-28">
+                                        <div className="flex items-center justify-between mb-4">
+                                            <h2 className="text-base font-bold flex items-center text-gray-800"><Activity className="h-4 w-4 mr-2 text-indigo-500" />选择影像征象</h2>
+                                            <button onClick={() => setSelectedSigns([])} className="text-xs font-medium text-gray-400 hover:text-red-500 px-2 py-1 hover:bg-red-50 rounded-lg active:scale-95">重置</button>
+                                        </div>
+                                        <div className="relative mb-4 group">
+                                            <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
+                                            <input type="text" placeholder="搜索征象..." className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border-none rounded-xl text-sm font-medium text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:bg-white transition-all" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                                        </div>
+                                        <div className="max-h-[40vh] lg:max-h-[55vh] overflow-y-auto pr-1 custom-scrollbar">
+                                            <div className="flex flex-wrap gap-2">
+                                                {ALL_SIGNS.filter(s => s.includes(searchTerm)).map(sign => (
+                                                    <button key={sign} onClick={() => toggleSign(sign)} className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-200 border ${selectedSigns.includes(sign) ? 'bg-indigo-500 text-white border-indigo-500 shadow-sm shadow-indigo-200' : 'bg-white text-gray-600 border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/50 active:bg-gray-100'}`}>{sign}</button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        {selectedSigns.length > 0 && (
+                                            <div className="mt-4 pt-4 border-t border-gray-50">
+                                                <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">已选 ({selectedSigns.length})</h3>
+                                                <div className="flex flex-wrap gap-1.5">{selectedSigns.map(sign => (<span key={sign} className="flex items-center px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-xs font-semibold border border-indigo-100">{sign}<button onClick={() => toggleSign(sign)} className="ml-1.5 p-0.5 hover:bg-indigo-200 rounded-full transition-colors"><XCircle className="h-3 w-3" /></button></span>))}</div>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="lg:col-span-7">
+                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 lg:p-6 min-h-[300px] lg:min-h-[600px]">
+                                        <h2 className="text-base font-bold flex items-center mb-4 text-gray-800"><BrainCircuit className="h-4 w-4 mr-2 text-indigo-500" />分析结果</h2>
+                                        {selectedSigns.length === 0 ? (
+                                            <div className="flex flex-col items-center justify-center h-40 lg:h-80 text-gray-400"><FlaskConical className="h-8 w-8 lg:h-10 lg:w-10 text-gray-200 mb-2" /><p className="text-sm font-medium">请在上方选择 CT 征象</p></div>
+                                        ) : diagnosisResults.length === 0 ? (
+                                            <div className="flex flex-col items-center justify-center py-10 text-gray-500 bg-gray-50/50 rounded-2xl border border-dashed border-gray-200 mx-auto max-w-sm"><AlertTriangle className="h-6 w-6 text-amber-400 mb-2" /><p className="text-sm font-medium">无完全匹配项</p><p className="text-xs text-gray-400 mt-1">尝试减少征象数量</p></div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <div className="flex justify-between items-center text-[10px] font-semibold text-gray-400 px-1 uppercase tracking-wide"><span>匹配 ({diagnosisResults.length})</span><span>相关度排序</span></div>
+                                                {diagnosisResults.map((result, idx) => (
+                                                    <div key={result.id} className={`group relative p-4 rounded-2xl border transition-all active:scale-[0.99] ${idx === 0 ? 'bg-gradient-to-br from-indigo-50/80 to-blue-50/50 border-indigo-100 shadow-sm' : 'bg-white border-gray-100'}`}>
+                                                        {idx === 0 && <div className="absolute top-3 right-3 bg-indigo-500 text-white text-[10px] px-2 py-0.5 rounded-full shadow-sm font-bold flex items-center"><CheckCircle className="h-3 w-3 mr-1" />首选</div>}
+                                                        <div className="mb-2"><div className="flex items-center gap-2 mb-0.5 pr-12"><h3 className="text-sm lg:text-base font-bold text-gray-800 leading-snug">{result.name}</h3></div><span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-500 font-medium">{result.category}</span></div>
+                                                        <div className="flex items-center space-x-2 mb-3 opacity-80"><div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${result.score === selectedSigns.length ? 'bg-indigo-500' : 'bg-blue-400'}`} style={{ width: `${(result.score / selectedSigns.length) * 100}%` }} /></div><span className="text-[10px] font-bold text-gray-500 w-8 text-right">{Math.round((result.score / selectedSigns.length) * 100)}%</span></div>
+                                                        <div className="mb-3 bg-blue-50/50 rounded-lg p-2.5 border border-blue-100/50"><p className="text-xs text-blue-900/80 leading-snug"><span className="font-bold text-blue-700 mr-1">背景:</span>{result.clinicalContext}</p></div>
+                                                        <div className="flex flex-wrap gap-1 mb-3">
+                                                            {result.signs.map(sign => {
+                                                                const isMatch = selectedSigns.includes(sign);
+                                                                if (!isMatch && idx > 0) return null;
+                                                                return <span key={sign} className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${isMatch ? 'bg-white text-indigo-700 border-indigo-100' : 'bg-gray-50 text-gray-400 border-transparent'}`}>{sign}</span>;
+                                                            })}
+                                                        </div>
+                                                        <div className="p-2.5 bg-white/60 rounded-xl border border-gray-50 text-xs text-gray-600 flex items-start gap-2"><Info className="h-3.5 w-3.5 mt-0.5 text-indigo-500 shrink-0" /><p className="leading-relaxed">{result.pearls}</p></div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'encyclopedia' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-8 animate-fade-in">
+                                <div className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-100 p-4 min-h-[400px] lg:min-h-[600px]">
+                                    <div className="relative mb-4 group">
+                                        <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
+                                        <input type="text" placeholder="搜索疾病..." className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border-none rounded-xl text-sm font-medium text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:bg-white transition-all" value={encyclopediaSearch} onChange={(e) => setEncyclopediaSearch(e.target.value)} />
+                                    </div>
+                                    <div className="space-y-4 h-[400px] lg:h-[600px] overflow-y-auto pr-1 custom-scrollbar">
+                                        {Object.entries(groupedDiseases).map(([category, diseases]) => (
+                                            <div key={category}>
+                                                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 sticky top-0 bg-white py-1 z-10">{category}</h3>
+                                                <div className="space-y-1.5">
+                                                    {diseases.map(disease => (
+                                                        <button key={disease.id} onClick={() => handleDiseaseClick(disease)} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 active:scale-[0.98] ${selectedDisease?.id === disease.id ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200' : 'bg-white text-gray-600 border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/50'}`}>
+                                                            <div className="flex justify-between items-center"><span className="font-bold text-sm truncate pr-2">{disease.name}</span>{selectedDisease?.id === disease.id && <ChevronRight className="h-4 w-4 text-indigo-200 flex-shrink-0" />}</div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="lg:col-span-2" ref={detailsRef}>
+                                    {selectedDisease ? (
+                                        <div className="bg-white rounded-2xl shadow-lg shadow-gray-200/50 border border-gray-100 overflow-hidden lg:sticky lg:top-28">
+                                            <div className="bg-gradient-to-r from-gray-50 via-white to-gray-50 p-6 border-b border-gray-100">
+                                                <div className="flex items-center gap-2 mb-2"><span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-bold rounded-full uppercase tracking-wider">{selectedDisease.category}</span></div>
+                                                <h2 className="text-xl lg:text-2xl font-extrabold text-gray-900 tracking-tight leading-snug">{selectedDisease.name}</h2>
+                                            </div>
+                                            <div className="p-5 lg:p-8 space-y-6">
+                                                
+                                                {/* --- IMAGING ATLAS SECTION (Optimized for Mobile/APK) --- */}
+                                                <div className="bg-gray-50 rounded-xl p-5 border border-gray-200 relative">
+                                                    <div className="flex items-center justify-between mb-4">
+                                                        <h3 className="text-xs font-bold text-gray-700 uppercase tracking-widest flex items-center">
+                                                            <div className="bg-gray-200 p-1 rounded-md mr-1.5"><ImageIcon className="h-3.5 w-3.5 text-gray-600" /></div>
+                                                            影像图谱 (个人库)
+                                                        </h3>
+                                                        <label className={`cursor-pointer bg-white text-indigo-600 hover:bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center transition-all shadow-sm active:scale-95 ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                                                            {isUploading ? <div className="spinner mr-2"></div> : <Upload className="h-3.5 w-3.5 mr-1.5" />}
+                                                            {isUploading ? '处理中...' : '上传图谱'}
+                                                            <input 
+                                                                type="file" 
+                                                                accept="image/*" 
+                                                                className="hidden" 
+                                                                onChange={handleImageUpload}
+                                                                ref={fileInputRef}
+                                                                disabled={isUploading}
+                                                            />
+                                                        </label>
+                                                    </div>
+                                                    
+                                                    {/* Image Grid */}
+                                                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                                        {/* Images */}
+                                                        {diseaseImages[selectedDisease.id]?.map((imgRecord, idx) => (
+                                                            <div key={imgRecord.id || idx} className="group relative aspect-square bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all cursor-zoom-in" onClick={() => setPreviewImage(imgRecord.data)}>
+                                                                <img src={imgRecord.data} alt="Atlas" className="w-full h-full object-cover" />
+                                                                <button 
+                                                                    onClick={(e) => { e.stopPropagation(); handleDeleteImage(imgRecord.id, idx); }}
+                                                                    className="absolute top-1 right-1 p-1.5 bg-red-500/80 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 touch-manipulation"
+                                                                >
+                                                                    <Trash2 className="h-3 w-3" />
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                        
+                                                        {/* Empty State / Add Placeholder */}
+                                                        {(!diseaseImages[selectedDisease.id] || diseaseImages[selectedDisease.id].length === 0) && !isUploading && (
+                                                            <label className="col-span-2 sm:col-span-1 aspect-square border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-gray-400 hover:text-indigo-500 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all cursor-pointer touch-manipulation">
+                                                                <Plus className="h-8 w-8 mb-2 opacity-50" />
+                                                                <span className="text-[10px] font-medium">点击添加图片</span>
+                                                                <input 
+                                                                    type="file" 
+                                                                    accept="image/*" 
+                                                                    className="hidden" 
+                                                                    onChange={handleImageUpload}
+                                                                />
+                                                            </label>
+                                                        )}
+                                                    </div>
+                                                    <p className="text-[10px] text-gray-400 mt-2 text-right">图片已压缩并存储于本地数据库</p>
+                                                </div>
+                                                {/* --- END IMAGING ATLAS SECTION --- */}
+
+                                                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                                                    <h3 className="text-xs font-bold text-slate-700 uppercase tracking-widest mb-3 flex items-center"><Stethoscope className="h-3.5 w-3.5 mr-1.5 text-slate-500" />临床表现</h3>
+                                                    <div className="space-y-3"><div><span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">一般表现</span><p className="text-sm text-slate-700 leading-relaxed">{selectedDisease.clinicalGeneral || selectedDisease.clinicalContext}</p></div>{selectedDisease.clinicalSpecific && <div className="pt-2 border-t border-slate-200"><span className="text-[10px] font-bold text-rose-500 uppercase block mb-1">相对特异性表现</span><p className="text-sm text-slate-800 font-medium leading-relaxed">{selectedDisease.clinicalSpecific}</p></div>}</div>
+                                                </div>
+                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                    <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100/60"><h3 className="text-[10px] font-bold text-blue-700 uppercase tracking-widest mb-2 flex items-center"><User className="h-3.5 w-3.5 mr-1.5 text-blue-500" />临床高危背景</h3><p className="text-xs lg:text-sm text-blue-900/80 leading-relaxed font-medium">{selectedDisease.clinicalContext}</p></div>
+                                                    <div className="bg-indigo-50/60 rounded-xl p-4 border border-indigo-100/60"><h3 className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest mb-2 flex items-center"><Clock className="h-3.5 w-3.5 mr-1.5 text-indigo-500" />早期影像 (前3-5天)</h3><p className="text-xs lg:text-sm text-indigo-900/80 leading-relaxed font-medium">{selectedDisease.earlyStage}</p></div>
+                                                </div>
+                                                <div>
+                                                    <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 flex items-center"><Activity className="h-3.5 w-3.5 mr-1.5 text-indigo-500" />全病程影像征象</h3>
+                                                    <div className="flex flex-wrap gap-2">{selectedDisease.signs.map(sign => (<button key={sign} onClick={() => { setActiveTab('diff'); setSelectedSigns([sign]); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="px-3 py-1.5 bg-gray-50 hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 text-gray-600 rounded-lg text-xs font-semibold transition-all cursor-pointer border border-gray-100">{sign}</button>))}</div>
+                                                </div>
+                                                <div className="bg-amber-50/50 rounded-xl p-4 border border-amber-100/50 relative overflow-hidden">
+                                                    <div className="absolute top-0 right-0 p-2 opacity-10"><Info className="h-16 w-16 text-amber-500" /></div>
+                                                    <h3 className="text-xs font-bold text-amber-900 uppercase tracking-wide mb-2 flex items-center relative z-10"><div className="bg-amber-200 p-1 rounded-md mr-1.5"><Info className="h-3 w-3 text-amber-800" /></div>诊断珍珠</h3>
+                                                    <p className="text-amber-900/80 leading-relaxed text-xs lg:text-sm font-medium relative z-10">{selectedDisease.pearls}</p>
+                                                </div>
+                                                {selectedDisease.pathology && <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm"><h3 className="text-[10px] font-bold text-gray-900 uppercase tracking-widest mb-2 flex items-center"><div className="bg-purple-100 p-1 rounded-md mr-1.5"><Microscope className="h-3.5 w-3.5 text-purple-600" /></div>病理机制 (CT征象来源)</h3><p className="text-gray-600 leading-relaxed text-xs lg:text-sm text-justify">{selectedDisease.pathology}</p></div>}
+                                                {selectedDisease.microbiology && <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm"><h3 className="text-[10px] font-bold text-gray-900 uppercase tracking-widest mb-2 flex items-center"><div className="bg-rose-100 p-1 rounded-md mr-1.5"><Dna className="h-3.5 w-3.5 text-rose-600" /></div>确诊依据 / 微生物特征</h3><p className="text-gray-600 leading-relaxed text-xs lg:text-sm text-justify">{selectedDisease.microbiology}</p></div>}
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-full flex flex-col items-center justify-center text-gray-400 min-h-[300px] lg:min-h-[600px]"><div className="w-16 h-16 lg:w-24 lg:h-24 bg-gray-50 rounded-full flex items-center justify-center mb-4"><FlaskConical className="h-8 w-8 lg:h-12 lg:w-12 text-gray-300" /></div><p className="font-medium text-sm">选择上方列表查看详细信息</p></div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'signs' && (
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:gap-8 animate-fade-in">
+                                <div className="lg:col-span-1 bg-white rounded-2xl shadow-sm border border-gray-100 p-4 min-h-[400px] lg:min-h-[600px]">
+                                    <div className="relative mb-4 group">
+                                        <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400 group-focus-within:text-indigo-500 transition-colors" />
+                                        <input type="text" placeholder="搜索影像征象..." className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border-none rounded-xl text-sm font-medium text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 focus:bg-white transition-all" value={signSearch} onChange={(e) => setSignSearch(e.target.value)} />
+                                    </div>
+                                    <div className="space-y-1.5 h-[400px] lg:h-[600px] overflow-y-auto pr-1 custom-scrollbar">
+                                        {filteredSigns.map(sign => (
+                                            <button key={sign.name} onClick={() => handleSignClick(sign)} className={`w-full text-left p-3 rounded-xl border transition-all duration-200 active:scale-[0.98] ${selectedSignDetail?.name === sign.name ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-200' : 'bg-white text-gray-600 border-gray-100 hover:border-indigo-200 hover:bg-indigo-50/50'}`}>
+                                                <div className="flex justify-between items-center"><span className="font-bold text-sm truncate pr-2">{sign.name}</span>{selectedSignDetail?.name === sign.name && <ChevronRight className="h-4 w-4 text-indigo-200 flex-shrink-0" />}</div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="lg:col-span-2" ref={signDetailsRef}>
+                                    {selectedSignDetail ? (
+                                        <div className="bg-white rounded-2xl shadow-lg shadow-gray-200/50 border border-gray-100 overflow-hidden lg:sticky lg:top-28">
+                                            <div className="bg-gradient-to-r from-gray-50 via-white to-gray-50 p-6 border-b border-gray-100">
+                                                <div className="flex items-center gap-2 mb-2"><span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-bold rounded-full uppercase tracking-wider">影像学定义</span></div>
+                                                <h2 className="text-xl lg:text-2xl font-extrabold text-gray-900 tracking-tight leading-snug">{selectedSignDetail.name}</h2>
+                                            </div>
+                                            <div className="p-5 lg:p-8 space-y-6">
+                                                <div className="bg-indigo-50/60 rounded-xl p-5 border border-indigo-100/60"><h3 className="text-xs font-bold text-indigo-700 uppercase tracking-widest mb-3 flex items-center"><Eye className="h-4 w-4 mr-2 text-indigo-500" />征象描述</h3><p className="text-sm text-indigo-900/90 leading-relaxed font-medium">{selectedSignDetail.description}</p></div>
+                                                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm"><h3 className="text-xs font-bold text-gray-900 uppercase tracking-widest mb-3 flex items-center"><div className="bg-purple-100 p-1 rounded-md mr-1.5"><Microscope className="h-3.5 w-3.5 text-purple-600" /></div>病理基础</h3><p className="text-sm text-gray-600 leading-relaxed text-justify">{selectedSignDetail.pathology}</p></div>
+                                                <div className="bg-white rounded-xl p-5 border border-gray-100 shadow-sm"><h3 className="text-xs font-bold text-gray-900 uppercase tracking-widest mb-3 flex items-center"><div className="bg-emerald-100 p-1 rounded-md mr-1.5"><Activity className="h-3.5 w-3.5 text-emerald-600" /></div>常见病因</h3><p className="text-sm text-gray-600 leading-relaxed text-justify">{selectedSignDetail.commonCauses}</p></div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 h-full flex flex-col items-center justify-center text-gray-400 min-h-[300px] lg:min-h-[600px]"><div className="w-16 h-16 lg:w-24 lg:h-24 bg-gray-50 rounded-full flex items-center justify-center mb-4"><Eye className="h-8 w-8 lg:h-12 lg:w-12 text-gray-300" /></div><p className="font-medium text-sm">选择左侧征象查看专业解读</p></div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Image Preview Modal */}
+                        {previewImage && (
+                            <div className="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+                                <button className="absolute top-4 right-4 p-2 bg-white/10 text-white rounded-full hover:bg-white/20 transition-colors z-50">
+                                    <X className="h-6 w-6" />
+                                </button>
+                                <img src={previewImage} alt="Preview" className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
+                            </div>
+                        )}
+                    </main>
+
+                    <footer className="max-w-7xl mx-auto px-6 py-6 lg:py-10 mt-4 lg:mt-8 border-t border-gray-200">
+                        <div className="bg-yellow-50/80 border border-yellow-100 rounded-xl p-4 flex items-start gap-3 shadow-sm"><AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0 mt-0.5" /><div className="text-xs text-yellow-800"><p className="font-bold mb-1">医学声明 (Medical Disclaimer)</p><p className="opacity-90 leading-relaxed">本系统仅供医学教育和辅助参考，不能替代临床病理、微生物培养及专业医师诊断。</p></div></div>
+                        <p className="text-center text-gray-400 text-[10px] lg:text-xs mt-6 font-medium">© 2026 CT分析助手 | Designed by 一路向北</p>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<InfectiousLungID />);
+    </script>
+</body>
 </html>
