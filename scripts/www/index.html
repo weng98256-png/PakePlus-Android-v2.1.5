@@ -1,11 +1,661 @@
 <!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PakePlus</title>
-    </head>
-    <body>
-        PakePlus
-    </body>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>抗生素用药助手 Ultimate+ V7.3</title>
+    
+    <!-- 核心库 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- 样式微调 -->
+    <style>
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .safe-top { padding-top: max(env(safe-area-inset-top), 20px); }
+        body { -webkit-tap-highlight-color: transparent; }
+        .tool-card-enter { animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    </style>
+
+    <!-- 图标库定义 -->
+    <script type="text/babel">
+        const Icons = {
+            Search: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>,
+            Book: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
+            AlertTriangle: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>,
+            Info: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>,
+            Activity: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>,
+            Pill: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/></svg>,
+            ChevronLeft: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>,
+            Droplet: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/></svg>,
+            Scale: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1Z"/><path d="M7 21h10"/><path d="M12 3v18"/><path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>,
+            Stethoscope: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v6a2 2 0 0 0 2 2v0a2 2 0 0 0 2-2v-6"/><circle cx="12" cy="9" r="1"/></svg>,
+            Zap: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+            Target: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>,
+            Bug: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg>,
+            Timer: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="10" x2="14" y1="2" y2="2"/><line x1="12" x2="15" y1="14" y2="11"/><circle cx="12" cy="14" r="8"/></svg>,
+            Database: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
+            Calculator: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></svg>,
+            Baby: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12h.01"/><path d="M15 12h.01"/><path d="M10 16c.5.3 1.2.5 2 .5s1.5-.2 2-.5"/><path d="M19 6.3a9 9 0 0 1 1.8 3.9 2 2 0 0 1 0 3.6 9 9 0 0 1-17.6 0 2 2 0 0 1 0-3.6A9 9 0 0 1 12 3c2 0 3.5 1.1 5.3 2.4"/><path d="M10 21v-4h4v4"/></svg>,
+            ClipboardCheck: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>,
+            Grid: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>,
+            Flask: (props) => <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><line x1="10" x2="14" y1="2" y2="2"/><path d="M8.5 2h7"/></svg>
+        };
+        window.Icons = Icons;
+    </script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- 1. 全局数据定义 ---
+        const categories = ['全部', '青霉素类', '头孢菌素类', '碳青霉烯类', '单环/其他β', '喹诺酮类', '大环内酯类', '氨基糖苷类', '四环素类', '糖肽/噁唑烷酮', '抗真菌药', '抗病毒药', '厌氧/磺胺/其他'];
+
+        const pathogenData = [
+            { id: 'b1', name: '肺炎链球菌 (S. pneumoniae)', type: '细菌 (G+)', first_line: '青霉素G, 阿莫西林', alternative: '左氧氟沙星, 莫西沙星, 头孢曲松, 万古霉素(脑膜炎)', note: 'CAP最常见。PRSP(耐青霉素)增加。' },
+            { id: 'b_strep', name: '化脓性链球菌 (GAS)', type: '细菌 (G+)', first_line: '青霉素G, 阿莫西林', alternative: '一代头孢, 克林霉素, 大环内酯类(耐药率高)', note: '咽炎, 丹毒, 坏死性筋膜炎。' },
+            { id: 'b2', name: '金黄色葡萄球菌 (MSSA)', type: '细菌 (G+)', first_line: '苯唑西林, 头孢唑林', alternative: '头孢呋辛, 喹诺酮类, 克林霉素', note: '首选β-内酰胺类，杀菌快于万古。' },
+            { id: 'b3', name: '金黄色葡萄球菌 (MRSA)', type: '细菌 (G+)', first_line: '万古霉素', alternative: '达托霉素(非肺炎), 利奈唑胺, 头孢洛林, 替考拉宁', note: '院内感染常见。' },
+            { id: 'b_ent_faecalis', name: '粪肠球菌 (E. faecalis)', type: '细菌 (G+)', first_line: '氨苄西林/阿莫西林', alternative: '万古霉素, 利奈唑胺, 达托霉素', note: '头孢菌素天然无效。' },
+            { id: 'b_ent_faecium', name: '屎肠球菌 (VRE多见)', type: '细菌 (G+)', first_line: '利奈唑胺, 达托霉素', alternative: '替加环素', note: '绝大多数对氨苄西林耐药。' },
+            { id: 'b_listeria', name: '李斯特菌', type: '细菌 (G+)', first_line: '氨苄西林 (+/- 庆大霉素)', alternative: '复方磺胺(SMZ-TMP)', note: '头孢菌素天然无效！脑膜炎需覆盖。' },
+            { id: 'b_ecoli', name: '大肠埃希菌 (非ESBLs)', type: '细菌 (G-)', first_line: '二/三代头孢', alternative: '喹诺酮类, 氨基糖苷类', note: '尿路感染最常见。' },
+            { id: 'b_ecoli_esbl', name: '大肠埃希菌 (产ESBLs)', type: '细菌 (G-)', first_line: '碳青霉烯类 (厄他/美罗), 哌拉西林他唑巴坦', alternative: '阿米卡星, 磷霉素(尿路), 头孢美唑', note: '避免三代头孢。' },
+            { id: 'b_kpc', name: '肺炎克雷伯菌 (CRE/KPC)', type: '细菌 (G-)', first_line: '头孢他啶/阿维巴坦 (CZA)', alternative: '替加环素+多黏菌素', note: '极难治疗。' },
+            { id: 'b6', name: '铜绿假单胞菌', type: '细菌 (G-)', first_line: '哌拉西林他唑巴坦, 头孢他啶, 头孢吡肟, 美罗培南, 环丙沙星', alternative: '多黏菌素, 阿米卡星, CZA', note: '厄他培南无效。' },
+            { id: 'b_crab', name: '鲍曼不动杆菌 (CRAB)', type: '细菌 (G-)', first_line: '舒巴坦制剂(高剂量)', alternative: '替加环素, 多黏菌素, 米诺环素', note: '常需联合治疗。' },
+            { id: 'b_steno', name: '嗜麦芽窄食单胞菌', type: '细菌 (G-)', first_line: '复方磺胺 (SMZ-TMP)', alternative: '头孢哌酮舒巴坦, 替加环素, 喹诺酮', note: '碳青霉烯天然耐药。' },
+            { id: 'b_haem', name: '流感嗜血杆菌', type: '细菌 (G-)', first_line: '阿莫西林/克拉维酸, 二/三代头孢', alternative: '喹诺酮类, 阿奇霉素', note: 'COPD急性加重常见。' },
+            { id: 'b_legion', name: '嗜肺军团菌', type: '非典型', first_line: '阿奇霉素, 喹诺酮类(左氧/莫西)', alternative: '多西环素', note: 'β-内酰胺无效。' },
+            { id: 'b_myco', name: '肺炎支原体', type: '非典型', first_line: '阿奇霉素, 多西环素', alternative: '喹诺酮类', note: '大环内酯耐药率上升，成人可选多西/喹诺酮。' },
+            { id: 'b_anaerobe', name: '脆弱拟杆菌 (厌氧)', type: '厌氧菌', first_line: '甲硝唑, 碳青霉烯, 酶抑制剂复方', alternative: '莫西沙星, 克林霉素(耐药高)', note: '腹腔感染核心。' },
+            { id: 'b_cdiff', name: '艰难梭菌', type: '厌氧菌', first_line: '口服万古霉素, 非达霉素', alternative: '甲硝唑(仅轻症)', note: '抗生素相关腹泻。' },
+            { id: 'f1', name: '白色念珠菌', type: '真菌', first_line: '氟康唑', alternative: '棘白菌素类', note: '最常见。' },
+            { id: 'f_glabrata', name: '光滑念珠菌', type: '真菌', first_line: '棘白菌素类 (卡泊/米卡)', alternative: '伏立康唑(部分敏感)', note: '对氟康唑敏感性差。' },
+            { id: 'f2', name: '曲霉菌', type: '真菌', first_line: '伏立康唑', alternative: '两性霉素B, 泊沙康唑, 棘白菌素(联合)', note: '晕轮征。' },
+            { id: 'f_crypto', name: '隐球菌', type: '真菌', first_line: '两性霉素B + 氟胞嘧啶', alternative: '氟康唑 (巩固期)', note: '墨汁染色阳性。' },
+            { id: 'f_pcp', name: '肺孢子菌 (PCP/PJP)', type: '真菌', first_line: '复方磺胺 (SMZ-TMP)', alternative: '克林霉素+伯氨喹, 卡泊芬净(联合)', note: 'HIV/免疫抑制者。' },
+            { id: 'v_flu', name: '流感病毒 (A/B)', type: '病毒', first_line: '奥司他韦', alternative: '玛巴洛沙韦', note: '季节性。' },
+            { id: 'v_hsv', name: '单纯疱疹/带状疱疹', type: '病毒', first_line: '阿昔洛韦, 伐昔洛韦', alternative: '泛昔洛韦', note: '痛感明显。' }
+        ];
+
+        const antibioticsData = [
+            { id: 'p1', name: '阿莫西林 (Amoxicillin)', category: '青霉素类', details: { indications: '敏感菌所致上呼吸道感染、泌尿道感染、皮肤软组织感染。', dosage: '口服 0.5g q8h。', child_dose: '口服: 20-40mg/kg/day 分3次。', renal_dose: 'CCr 10-30: 0.25-0.5g q12h; CCr<10: 0.25-0.5g q24h。', crrt_dose: '0.25-0.5g q12h', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1-1.3h', binding: '20%', excretion: '肾排泄' }, differentiation: '与氨苄西林相比：口服生物利用度更高（90% vs 40%），血药浓度更高，皮疹发生率相对较低。主要用于社区获得性轻中度感染。', warning: '青霉素过敏禁用。' }, tags: ['口服', 'G+'] },
+            { id: 'p2', name: '青霉素 G (Penicillin G)', category: '青霉素类', details: { indications: '链球菌感染、梅毒、气性坏疽、钩端螺旋体病。', dosage: 'IV 200-400万单位 q4-6h。', child_dose: 'IV: 10-20万单位/kg/day 分4-6次。', renal_dose: 'CCr<10: 剂量减半或 q12h。', crrt_dose: '100-200万单位 q6h', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '0.5h', binding: '60%', excretion: '肾排泄' }, differentiation: '天然青霉素：对G+球菌(不产酶金葡、链球菌)活性最强，但极易被β-内酰胺酶水解。不耐酸(不能口服)。是梅毒治疗的首选药物。', warning: '必须皮试。大剂量防青霉素脑病。' }, tags: ['梅毒', 'G+'] },
+            { id: 'p4', name: '哌拉西林他唑巴坦 (Piperacillin/Tazobactam)', category: '青霉素类', details: { indications: '中重度感染、铜绿假单胞菌感染、腹腔感染、HAP。', dosage: 'IV 4.5g q8h 或 q6h (重症)。', child_dose: 'IV: 300mg/kg/day (基于哌拉西林) 分3-4次。', renal_dose: 'CCr 20-40: 2.25g q6h; CCr<20: 2.25g q8h。', crrt_dose: '【CRRT剂量建议】推荐：2.25g q6h 或 4.5g q8h。重症感染/MIC较高时：4.5g q8h，建议延长输注时间(3-4h)以优化T>MIC。', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1h', binding: '30%', excretion: '肾排泄' }, differentiation: '【同类鉴别】\n1. 与头孢哌酮/舒巴坦相比：抗铜绿假单胞菌活性相当；含钠量较高(2.35mEq/g)，心衰患者需注意；无双硫仑样反应风险。\n2. 酶抑制剂：他唑巴坦抑酶谱广，稳定性好。', warning: '需皮试。严重肾功能不全者需调整剂量。' }, tags: ['抗铜绿', '重症', '酶抑制剂'] },
+            { id: 'p5', name: '阿莫西林克拉维酸钾 (Amoxicillin/Clavulanate)', category: '青霉素类', details: { indications: '产酶菌所致呼吸道/尿路感染、动物咬伤。', dosage: 'IV 1.2g q8h; PO 375-625mg tid。', child_dose: 'PO (7:1制剂): 30-40mg/kg/day 分2-3次。', renal_dose: 'CCr 10-30: 1.2g q12h; CCr<10: 1.2g q24h。', crrt_dose: '1.2g q12h', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1h', binding: '20%', excretion: '肾排泄' }, differentiation: '与单纯阿莫西林相比：覆盖产β-内酰胺酶菌株(如MSSA、大肠、流感嗜血杆菌)；克拉维酸钾增加了胃肠道反应(腹泻)的风险，且有潜在肝毒性。', warning: '肝毒性风险略高于单药。' }, tags: ['复合制剂', '社区感染'] },
+            { id: 'c0', name: '头孢唑林 (Cefazolin - 一代)', category: '头孢菌素类', details: { indications: '手术预防用药首选、MSSA感染、轻症G+菌感染。', dosage: 'IV 1-2g q8h。', child_dose: 'IV: 50-100mg/kg/day 分3次。', renal_dose: 'CCr 10-30: 1g q12h; CCr<10: 0.5g q24h。', crrt_dose: '1g q12h', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1.8h', binding: '85%', excretion: '肾排泄' }, differentiation: '一代头孢：对G+球菌(尤其是金葡菌)作用最强，对G-菌较差。血流感染治疗MSSA优于万古霉素。不入脑，不治脑膜炎。', warning: '不入脑，不治脑膜炎。' }, tags: ['一代', '手术预防', 'MSSA'] },
+            { id: 'c_2nd', name: '头孢呋辛 (Cefuroxime - 二代)', category: '头孢菌素类', details: { indications: '上呼吸道感染、围手术期预防(部分)、轻中度CAP。', dosage: 'IV 0.75-1.5g q8h; PO 250mg bid。', child_dose: 'IV: 50-100mg/kg/day 分3-4次。', renal_dose: 'CCr 10-20: 0.75g q12h; CCr<10: 0.75g q24h。', crrt_dose: '0.75-1.5g q12h', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1.2h', binding: '50%', excretion: '肾排泄' }, differentiation: '二代头孢：兼顾G+和G-。对流感嗜血杆菌活性好。虽然可透过血脑屏障，但通常不作为脑膜炎首选。', warning: '与氨基糖苷类合用增加肾毒性。' }, tags: ['二代', '社区感染'] },
+            { id: 'c1', name: '头孢曲松 (Ceftriaxone - 三代)', category: '头孢菌素类', details: { indications: 'CAP、脑膜炎、腹腔感染、淋病、莱姆病。', dosage: 'IV 1-2g qd; 脑膜炎 2g q12h。', child_dose: 'IV: 50-75mg/kg qd。', renal_dose: '肝肾双排，一般无需调整 (除非肝肾同时衰竭)。', crrt_dose: '【CRRT剂量建议】无需调整。常规剂量 1-2g q24h。', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '8h', binding: '85-95%', excretion: '肝肾双排' }, differentiation: '【同类鉴别】\n1. vs 头孢他啶：头孢曲松对铜绿假单胞菌**无效**，但对G+球菌(如肺炎链球菌)活性优于头孢他啶。\n2. 半衰期：极长(8h)，可一日一次给药。\n3. 排泄：肝肾双排，肾衰时一般不需减量，但易致胆囊假性结石(胆泥)。', warning: '严禁与含钙制剂(如林格液)合用！' }, tags: ['三代', '长效'] },
+            { id: 'c5', name: '头孢他啶 (Ceftazidime - 三代)', category: '头孢菌素类', details: { indications: '铜绿假单胞菌感染、粒缺发热、HAP。', dosage: 'IV 1-2g q8h。', child_dose: 'IV: 100-150mg/kg/day 分3次。', renal_dose: 'CCr 30-50: 1g q12h; CCr 15-30: 1g q24h; CCr<15: 0.5g q24h。', crrt_dose: '【CRRT剂量建议】推荐：1g q12h。CRRT清除率较高，需补充剂量。', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1.8h', binding: '<10%', excretion: '肾排泄' }, differentiation: '【同类鉴别】\n1. vs 头孢曲松：头孢他啶是三代头孢中抗铜绿假单胞菌最强的药物。\n2. 弱点：对G+球菌(如金葡菌)活性极弱，不如头孢曲松/头孢唑林。\n3. 诱导耐药：容易诱导AmpC酶，治疗肠杆菌科时需谨慎。', warning: '对青霉素过敏者慎用。' }, tags: ['三代', '抗铜绿'] },
+            { id: 'c_sul', name: '头孢哌酮/舒巴坦 (Cefoperazone/Sulbactam)', category: '头孢菌素类', details: { indications: '腹腔感染、胆道感染、鲍曼不动杆菌感染(CRAB)。', dosage: 'IV 2-3g q8h-q12h (国内常用)。治疗不动杆菌常需高剂量 (舒巴坦 4g/日)。', child_dose: 'IV: 40-80mg/kg/day 分2-4次。', renal_dose: '主要经胆汁排泄。CCr < 30时需调整舒巴坦剂量，头孢哌酮通常不需调整。', crrt_dose: '【CRRT剂量建议】推荐：2g-3g q12h。头孢哌酮基本不被清除，舒巴坦可被清除。', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1.7h', binding: '90%', excretion: '胆汁(主)/肾' }, differentiation: '【同类鉴别】\n1. 不动杆菌：舒巴坦成分对不动杆菌有直接杀菌作用，是治疗CRAB的基石。\n2. 胆道：胆汁浓度极高，适合胆道感染。\n3. 副作用：双硫仑样反应(戒酒)，出血倾向(需补Vit K)。', warning: '双硫仑样反应(戒酒)，出血倾向。' }, tags: ['不动杆菌', '胆道', '三代'] },
+            { id: 'c4', name: '头孢吡肟 (Cefepime - 四代)', category: '头孢菌素类', details: { indications: '发热粒缺、重症HAP、产AmpC酶肠杆菌。', dosage: 'IV 1-2g q12h (重症 q8h)。', child_dose: 'IV: 100mg/kg/day 分2次。', renal_dose: 'CCr 30-60: 2g q24h; CCr 11-29: 1g q24h; CCr < 11: 0.5g q24h。', crrt_dose: '【CRRT剂量建议】推荐：1g-2g q24h (视流速)。高流量CRRT可能需要 2g q12h。注意：一定要调整，否则易蓄积。', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '2h', binding: '20%', excretion: '肾排泄' }, differentiation: '【同类鉴别】\n1. 结构：两性离子结构，穿透力强。\n2. 抗菌谱：兼顾了抗G+(优于头孢他啶)和抗G-铜绿(相当头孢他啶)。\n3. 稳定性：对AmpC酶稳定。', warning: '肾功能不全未减量极易诱发脑病(意识障碍/抽搐)。' }, tags: ['四代', '抗铜绿'] },
+            { id: 'c_star', name: '头孢洛林 (Ceftaroline - 五代)', category: '头孢菌素类', details: { indications: 'MRSA皮肤软组织感染、CAP。', dosage: 'IV 600mg q12h (输注1h)。', child_dose: 'IV: 8-12mg/kg q8h。', renal_dose: 'CCr 30-50: 400mg q12h; CCr 15-30: 300mg q12h; CCr<15: 200mg q12h。', crrt_dose: '300-400mg q12h', pregnancy: 'B', pk_info: { mode: '时间依赖性', half_life: '2.5h', binding: '20%', excretion: '肾排泄' }, differentiation: '五代头孢：唯一对MRSA有效的头孢菌素（因与PBP2a亲和力高）。对铜绿假单胞菌无效（区别于四代）。', warning: '不覆盖铜绿假单胞菌。' }, tags: ['五代', 'MRSA'] },
+            { id: 'c_cza', name: '头孢他啶/阿维巴坦 (CZA)', category: '头孢菌素类', details: { indications: 'KPC酶CRE、难治性铜绿假单胞菌、腹腔感染。', dosage: 'IV 2.5g q8h (输注2小时)。', renal_dose: 'CCr 30-50: 1.25g q8h; CCr 15-30: 0.94g q12h; CCr <15: 0.94g q24h。', crrt_dose: '0.94g q12h (CVVH) 或根据流量调整', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '2.7h', binding: '10%', excretion: '肾排泄' }, differentiation: '新型酶抑制剂复方：阿维巴坦可抑制KPC、OXA-48、ESBLs、AmpC酶，但对金属酶(NDM)无效。是治疗CRE-KPC的首选药物。', warning: '价格昂贵，仅限耐药菌挽救性治疗。' }, tags: ['新药', 'CRE首选'] },
+            { id: 'cb1', name: '亚胺培南西司他丁 (Imipenem/Cilastatin)', category: '碳青霉烯类', details: { indications: '重症感染、混合感染、ESBLs菌株。', dosage: 'IV 0.5g q6h 或 1g q8h。', child_dose: 'IV: 60-100mg/kg/day 分4次。', renal_dose: 'CCr 30-70: 0.5g q8h; CCr 20-30: 0.5g q12h; CCr < 20: 0.25g q12h。', crrt_dose: '【CRRT剂量建议】推荐：500mg q6h-q8h。注意：剂量过高易诱发癫痫，需密切观察。', pregnancy: 'C', pk_info: { mode: 'T>MIC', half_life: '1h', binding: '20%', excretion: '肾排泄' }, differentiation: '【同类鉴别 - vs 美罗培南】\n1. 抗G+菌：亚胺培南对G+球菌(如粪肠球菌)活性略强。\n2. 中枢毒性：亚胺培南诱发癫痫风险较高，**不用于脑膜炎**。\n3. 制剂：需加西司他丁抑制肾脱氢肽酶。', warning: '中枢毒性高，癫痫史/肾衰慎用。禁与丙戊酸合用。' }, tags: ['泰能', 'ESBLs'] },
+            { id: 'cb2', name: '美罗培南 (Meropenem)', category: '碳青霉烯类', details: { indications: '细菌性脑膜炎、重症肺炎、脓毒症。', dosage: 'IV 1g q8h (脑膜炎 2g q8h)。', child_dose: 'IV: 20-40mg/kg q8h。', renal_dose: 'CCr 26-50: 1g q12h; CCr 10-25: 0.5g q12h。', crrt_dose: '【CRRT剂量建议】推荐：1g q8h-q12h。重症/MDR感染建议 1g q8h (甚至 2g q8h)。CRRT清除率高。', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '1h', binding: '2%', excretion: '肾排泄' }, differentiation: '【同类鉴别 - vs 亚胺培南】\n1. 抗G-菌：对铜绿假单胞菌活性略强。\n2. 中枢毒性：显著低于亚胺培南，是治疗脑膜炎的首选碳青霉烯。\n3. 可持续输注(Prolonged Infusion)优化PK/PD。', warning: '禁与丙戊酸合用(导致丙戊酸浓度骤降)。' }, tags: ['脑膜炎', '抗铜绿'] },
+            { id: 'cb3', name: '厄他培南 (Ertapenem)', category: '碳青霉烯类', details: { indications: '社区获得性腹腔/肺炎/尿路感染。', dosage: 'IV 1g qd。', child_dose: 'IV: 15mg/kg bid。', renal_dose: 'CCr < 30: 0.5g qd。', crrt_dose: '【CRRT剂量建议】推荐：1g q24h (无需调整)。蛋白结合率高，CRRT清除少。', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '4h', binding: '>90%', excretion: '肾排泄' }, differentiation: '【同类鉴别】\n1. 抗菌谱：**不覆盖铜绿假单胞菌和不动杆菌** (重要区别!)。\n2. 药代：半衰期长，一天一次给药，方便门诊使用。', warning: '切记不覆盖铜绿和不动杆菌。' }, tags: ['一日一次'] },
+            { id: 'cb4', name: '比阿培南 (Biapenem)', category: '碳青霉烯类', details: { indications: '败血症、肺炎、尿路感染。', dosage: 'IV 300mg q12h (重症 600mg q12h)。', renal_dose: 'CCr 30-50: 300mg q24h。', crrt_dose: '【CRRT剂量建议】推荐：300mg q12h。', pregnancy: 'C', pk_info: { mode: 'T>MIC', half_life: '1h', binding: '3.7%', excretion: '肾排泄' }, differentiation: '【同类鉴别】自身对肾脱氢肽酶稳定，无需加西司他丁。肾毒性和中枢毒性均较低。抗菌谱类似美罗培南。', warning: '主要经肾排泄。' }, tags: ['肾毒性低'] },
+            { id: 'mono1', name: '氨曲南 (Aztreonam)', category: '单环/其他β', details: { indications: '青霉素过敏者的G-菌感染。', dosage: 'IV 1-2g q8h (重症 q6h)。', child_dose: 'IV: 30mg/kg q6-8h。', renal_dose: 'CCr 10-30: 首剂正常, 维持量减半; CCr<10: 1/4剂量。', crrt_dose: '1g q12h', pregnancy: 'B', pk_info: { mode: '时间依赖性', half_life: '1.7h', binding: '56%', excretion: '肾排泄' }, differentiation: '单环β-内酰胺类：仅对G-需氧菌有效，对G+和厌氧菌无效。与青霉素/头孢(除头孢他啶外)无交叉过敏。', warning: '对头孢他啶过敏者可能对氨曲南过敏(侧链相似)。' }, tags: ['青霉素过敏', 'G-专用'] },
+            { id: 'q1', name: '左氧氟沙星 (Levofloxacin)', category: '喹诺酮类', details: { indications: '社区获得性肺炎、复杂尿路感染。', dosage: 'IV/PO 0.5g qd (重症 0.75g)。', child_dose: '18岁以下通常禁用。', renal_dose: 'CCr 20-49: 首剂0.5g, 维持0.25g q24h。', crrt_dose: '0.25g q24h 或 0.5g q48h', pregnancy: 'C', pk_info: { mode: 'AUC/MIC', half_life: '6-8h', binding: '30%', excretion: '肾排泄' }, differentiation: '与莫西沙星相比：主要经肾排泄，尿药浓度高，适合尿路感染；抗铜绿假单胞菌有一定活性。', warning: '18岁以下禁用。肌腱炎/断裂风险，血糖异常。' }, tags: ['广谱', '尿路'] },
+            { id: 'q2', name: '莫西沙星 (Moxifloxacin)', category: '喹诺酮类', details: { indications: 'CAP、腹腔感染、结核病二线。', dosage: 'IV/PO 0.4g qd。', child_dose: '禁用。', renal_dose: '无需调整 (肝胆排泄)。', crrt_dose: '无需调整', pregnancy: 'C', pk_info: { mode: 'AUC/MIC', half_life: '12h', binding: '50%', excretion: '肝胆/粪便' }, differentiation: '与左氧氟沙星相比：抗G+菌(肺炎链球菌)和厌氧菌活性更强；肝胆排泄，尿浓度低，不推荐单纯治疗尿路感染；QT间期延长风险较高。', warning: '心脏病/QT延长者慎用。不治尿感。' }, tags: ['呼吸喹诺酮', '厌氧菌'] },
+            { id: 'q3', name: '环丙沙星 (Ciprofloxacin)', category: '喹诺酮类', details: { indications: '铜绿假单胞菌感染、尿路感染、腹腔感染。', dosage: 'IV 0.4g q12h (或 q8h)。PO 0.5g bid。', renal_dose: 'CCr 30-50: q12h; CCr <30: q24h。', crrt_dose: '0.2-0.4g q12h', pregnancy: 'C', pk_info: { mode: '浓度依赖性', half_life: '4h', binding: '20-40%', excretion: '肾/肝' }, differentiation: '抗铜绿假单胞菌活性在喹诺酮中最强。抗G+菌(如肺链)活性弱，不适合作为肺炎首选。', warning: '由于抗G+弱，不推荐用于CAP经验治疗。' }, tags: ['抗铜绿', 'G-强效'] },
+            { id: 'm1', name: '阿奇霉素 (Azithromycin)', category: '大环内酯类', details: { indications: '非典型病原体(支原体/衣原体/军团菌)。', dosage: 'IV/PO 0.5g qd。', child_dose: 'PO: 10mg/kg qd。', renal_dose: '无需调整。', crrt_dose: '无需调整', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '68h', binding: '50%', excretion: '胆汁' }, differentiation: '与克拉霉素相比：半衰期极长；无CYP450酶抑制作用，药物相互作用少；胃肠道反应较轻。', warning: 'QT间期延长风险。' }, tags: ['支原体', '长效'] },
+            { id: 'm2', name: '克拉霉素 (Clarithromycin)', category: '大环内酯类', details: { indications: '幽门螺杆菌、非典型肺炎。', dosage: 'PO 0.5g bid。', renal_dose: 'CCr<30: 减半。', crrt_dose: '0.25g bid', pregnancy: 'C', pk_info: { mode: 'T>MIC', half_life: '3-7h', binding: '70%', excretion: '肾/代谢' }, differentiation: '强效CYP3A4抑制剂，药物相互作用多(如辛伐他汀、秋水仙碱)。金属味常见。', warning: '心脏病患者慎用(增加死亡率?)。' }, tags: ['HP根除'] },
+            { id: 'm3', name: '红霉素 (Erythromycin)', category: '大环内酯类', details: { indications: '支原体、百日咳 (现多被阿奇取代)。', dosage: 'IV 0.25-0.5g q6h。', renal_dose: '无需调整。', crrt_dose: '无需调整', pregnancy: 'B', pk_info: { mode: '时间依赖性', half_life: '1.5h', binding: '70%', excretion: '胆汁' }, differentiation: '第一代大环内酯。胃肠道反应极大，静脉滴注易引起静脉炎。P450抑制剂。', warning: '胃肠反应重，肝毒性。' }, tags: ['老药'] },
+            { id: 'amk1', name: '阿米卡星 (Amikacin)', category: '氨基糖苷类', details: { indications: 'MDR G-菌(铜绿、不动、大肠)重症联合治疗。', dosage: 'IV 15mg/kg qd (每日一次疗法降低耳肾毒性)。', child_dose: 'IV: 15mg/kg qd。', renal_dose: '必须监测血药浓度。CCr降低需大幅延长间隔(q48h或更长)。', crrt_dose: '需根据浓度监测给药，或透析后补充。', pregnancy: 'D', pk_info: { mode: 'Cmax/MIC', half_life: '2h', binding: '<10%', excretion: '肾排泄' }, differentiation: '与庆大霉素相比：对氨基糖苷类修饰酶更稳定，耐药率相对较低；耳毒性主要表现为听力下降(耳蜗)，庆大主要为前庭功能(眩晕)。', warning: '显著耳毒性、肾毒性。避免与其他肾毒药合用。' }, tags: ['重症联合', 'G-'] },
+            { id: 'o2', name: '万古霉素 (Vancomycin)', category: '糖肽类/噁唑烷酮', details: { indications: 'MRSA感染 (肺炎、血流、脑膜炎)。', dosage: 'IV 1g q12h (需监测谷浓度)。口服用于艰难梭菌。', child_dose: 'IV: 10-15mg/kg q6h。', renal_dose: '必须根据TDM (谷浓度 15-20mg/L) 调整。', crrt_dose: '【CRRT剂量建议】负荷20-25mg/kg, 维持500-750mg q12-24h (强烈建议监测浓度)', pregnancy: 'B/C', pk_info: { mode: 'AUC/MIC', half_life: '6h', binding: '55%', excretion: '肾排泄' }, differentiation: '与替考拉宁相比：组织穿透力稍弱(除骨/脑外)，肾毒性较高，“红人综合征”风险；但临床经验最丰富，是MRSA金标准。', warning: '快速输注致红人综合征。肾毒性。' }, tags: ['MRSA', '金标准'] },
+            { id: 'o3', name: '替考拉宁 (Teicoplanin)', category: '糖肽类/噁唑烷酮', details: { indications: 'MRSA感染 (皮肤软组织、骨关节)。', dosage: '负荷 0.4g q12h (3次), 维持 0.4g qd。', renal_dose: 'CCr 40-60: 维持量减半或 q2d。', crrt_dose: '维持量 400-800mg q48h-72h (结合率高清除少)', pregnancy: 'C', pk_info: { mode: 'AUC/MIC', half_life: '70h+', binding: '90%', excretion: '肾排泄' }, differentiation: '与万古霉素相比：半衰期极长(一天一次)；肾毒性低，过敏反应少；入脑能力差，不用于脑膜炎。', warning: '不用于脑膜炎。' }, tags: ['长效', '低毒'] },
+            { id: 'ox1', name: '利奈唑胺 (Linezolid)', category: '糖肽类/噁唑烷酮', details: { indications: 'VRE感染、MRSA肺炎/皮肤软组织。', dosage: 'IV/PO 0.6g q12h。', child_dose: 'IV/PO: 10mg/kg q8h (<12岁)。', renal_dose: '无需调整。', crrt_dose: '无需调整 (0.6g q12h)', pregnancy: 'C', pk_info: { mode: 'T>MIC', half_life: '5h', binding: '31%', excretion: '非肾' }, differentiation: '与万古霉素相比：口服生物利用度100%；肺组织浓度高(优于万古)；抗VRE有效；主要毒性为骨髓抑制。', warning: '骨髓抑制(血小板减少)，用药>2周需监测。' }, tags: ['VRE', '口服'] },
+            { id: 'dap1', name: '达托霉素 (Daptomycin)', category: '糖肽类/噁唑烷酮', details: { indications: 'MRSA血流感染、右侧心内膜炎。', dosage: 'IV 6-10 mg/kg q24h。', renal_dose: 'CCr<30: q48h。', crrt_dose: '6-8 mg/kg q24h', pregnancy: 'B', pk_info: { mode: 'AUC/MIC', half_life: '8h', binding: '90%', excretion: '肾排泄' }, differentiation: '环脂肽类：杀菌快。关键区别：被肺表面活性物质灭活，**绝对禁用于治疗肺炎**。', warning: '肺炎无效！监测CPK(肌损)。' }, tags: ['血流感染', '肺炎无效'] },
+            { id: 'tet1', name: '米诺环素 (Minocycline)', category: '四环素类', details: { indications: '鲍曼不动杆菌(CRAB)、嗜麦芽窄食单胞菌、痤疮。', dosage: 'PO/IV 首剂200mg, 维持100mg q12h。', renal_dose: '无需调整。', crrt_dose: '无需调整', pregnancy: 'D', pk_info: { mode: 'AUC/MIC', half_life: '15h', binding: '75%', excretion: '肝胆' }, differentiation: '与多西环素相比：脂溶性更高，组织穿透力强；对鲍曼不动杆菌活性常优于多西环素；前庭反应(头晕)发生率较高。', warning: '前庭反应(眩晕)，牙齿黄染(8岁以下禁用)。' }, tags: ['不动杆菌', '口服'] },
+            { id: 'tet2', name: '多西环素 (Doxycycline)', category: '四环素类', details: { indications: '立克次体、支原体、布鲁菌、非典型病原体。', dosage: 'PO 100mg q12h。', child_dose: 'PO: 2.2mg/kg q12h (>8岁)。', renal_dose: '无需调整。', crrt_dose: '无需调整', pregnancy: 'D', pk_info: { mode: '时间依赖性', half_life: '16-22h', binding: '90%', excretion: '胆汁/粪' }, differentiation: '安全性较好，光敏反应较多。是治疗非典型病原体和人畜共患病的重要药物。', warning: '食管溃疡风险(多饮水直立服)。' }, tags: ['立克次体', '非典型'] },
+            { id: 'gc1', name: '替加环素 (Tigecycline)', category: '四环素类', details: { indications: '复杂腹腔/皮肤感染 (MDR菌)。', dosage: 'IV 首剂100mg, 维持50mg q12h。', renal_dose: '无需调整。', crrt_dose: '无需调整 (首剂100mg, 维持50mg q12h)', pregnancy: 'D', pk_info: { mode: 'AUC/MIC', half_life: '42h', binding: '80%', excretion: '胆汁' }, differentiation: '甘氨酰环素类：克服了四环素主要耐药机制。特点是血药浓度低，组织浓度高。', warning: '血药浓度低，不适合单药治疗菌血症/HAP。' }, tags: ['MDR', '广谱'] },
+            { id: 'col1', name: '多黏菌素 B (Polymyxin B)', category: '其他/多黏菌素', details: { indications: 'XDR-G-菌 (CRE, CRAB, 铜绿)。血流感染首选。', dosage: 'IV 1.5-2.5 mg/kg/day 分2次。', child_dose: 'IV: 1.5-2.5 mg/kg/day 分2次。', renal_dose: '主要经非肾清除，一般不需大幅减量 (这点与黏菌素不同)。', crrt_dose: '无需调整 (1.25-1.5 mg/kg q12h)', pregnancy: 'C', pk_info: { mode: 'AUC/MIC', half_life: '13h', binding: '60%', excretion: '非肾' }, differentiation: '与多黏菌素E(黏菌素)相比：以活性形式给药，起效快，血药浓度稳，更适合血流感染；肾毒性略高于黏菌素？(存疑，目前认为相当)。', warning: '肾毒性，神经毒性，皮肤色素沉着。' }, tags: ['最后防线', 'CRE'] },
+            { id: 'col2', name: '多黏菌素 E (Colistin)', category: '其他/多黏菌素', details: { indications: '多重耐药菌尿路感染 (首选)。', dosage: 'IV (CMS前体) 剂量换算复杂，通常负荷 300mg CBA。', renal_dose: '必须根据肾功能严格调整！', crrt_dose: '需调整 (4.5MIU q12h)', pregnancy: 'C', pk_info: { mode: 'AUC/MIC', half_life: '14h', binding: '50%', excretion: '肾(CMS)' }, differentiation: '以前体(CMS)形式给药，尿液浓度极高，适合尿路感染；但血液转化为活性药慢，治疗血流感染不如多黏菌素B可靠。', warning: '单位换算极易出错 (IU vs mg)。' }, tags: ['尿路', '前体药'] },
+            { id: 'oth1', name: '磷霉素 (Fosfomycin)', category: '厌氧/磺胺/其他', details: { indications: '尿路感染、MDR菌(联合用药)。', dosage: 'IV 4-8g q12h (或分3次)。', renal_dose: '需减量。', crrt_dose: '需调整 (4-8g q12h)', pregnancy: 'B', pk_info: { mode: 'T>MIC', half_life: '2h', binding: '3%', excretion: '肾排泄' }, differentiation: '分子量小，穿透力极强(入脑/骨/脓液)。含钠量极高(每克含钠0.32g)，心衰慎用。', warning: '高钠负荷，心衰慎用。' }, tags: ['小分子', '透析出'] },
+            { id: 'af1', name: '氟康唑 (Fluconazole)', category: '抗真菌药', details: { indications: '白色念珠菌、隐球菌 (非诱导期)。', dosage: 'IV/PO 0.4g qd (首剂可加倍)。', child_dose: 'PO: 6-12mg/kg qd。', renal_dose: 'CCr<50 减半。', crrt_dose: '400-800mg q24h', pregnancy: 'C/D', pk_info: { mode: 'AUC/MIC', half_life: '30h', binding: '11%', excretion: '肾排泄' }, differentiation: '三唑类：口服吸收好，副作用小；但对克柔念珠菌天然耐药，对光滑念珠菌敏感性差，对曲霉无效。', warning: '肝酶升高。' }, tags: ['念珠菌'] },
+            { id: 'af2', name: '伏立康唑 (Voriconazole)', category: '抗真菌药', details: { indications: '侵袭性曲霉病 (金标准)。', dosage: '负荷6mg/kg q12h, 维持4mg/kg q12h。', child_dose: 'IV: 9mg/kg q12h (2-12岁)。', renal_dose: '口服无需调整; IV剂型因赋形剂蓄积，CCr<50慎用。', crrt_dose: '4mg/kg q12h', pregnancy: 'D', pk_info: { mode: 'AUC/MIC', half_life: '6h', binding: '58%', excretion: '肝代谢' }, differentiation: '与氟康唑相比：抗菌谱广(覆盖曲霉)；非线性药代动力学，个体差异大，建议TDM；独特副作用(视物模糊/光敏)。', warning: '药物相互作用极多(CYP3A4)。' }, tags: ['曲霉首选'] },
+            { id: 'af3', name: '卡泊芬净 (Caspofungin)', category: '抗真菌药', details: { indications: '念珠菌血症、侵袭性曲霉病(挽救治疗)。', dosage: 'IV 首剂70mg, 维持50mg qd。', child_dose: 'IV: 50mg/m2 qd。', renal_dose: '无需调整。', crrt_dose: '无需调整', pregnancy: 'C', pk_info: { mode: '浓度依赖性', half_life: '10h', binding: '97%', excretion: '肝代谢' }, differentiation: '棘白菌素类：对念珠菌(含耐氟康唑株)杀菌力强；安全性高(肝肾毒性小)；药物相互作用少；缺点是不入脑(不治脑膜炎)。', warning: '不用于真菌性脑膜炎。' }, tags: ['棘白菌素', '安全'] },
+            { id: 'af4', name: '两性霉素 B (Amphotericin B)', category: '抗真菌药', details: { indications: '隐球菌脑膜炎(联合氟胞嘧啶)、毛霉病、重症真菌。', dosage: 'IV 0.5-0.7 mg/kg/day (脂质体 3-5 mg/kg)。', renal_dose: '不需按CCr减量，但肾毒性发生时需停药或减量。', crrt_dose: '无需调整', pregnancy: 'B', pk_info: { mode: '浓度依赖性', half_life: '15天', binding: '>90%', excretion: '未知' }, differentiation: '多烯类：抗菌谱最广(几乎所有真菌)；但肾毒性、输液反应(寒战高热)、低钾血症极常见。脂质体剂型毒性降低。', warning: '毒性大，需严密监测肾功电解质。' }, tags: ['广谱', '高毒'] },
+            { id: 'af_itra', name: '伊曲康唑 (Itraconazole)', category: '抗真菌药', details: { indications: '组织胞浆菌病、孢子丝菌病、曲霉病(二线)。', dosage: 'PO 200mg bid; IV 200mg qd。', renal_dose: 'IV剂型 CCr<30 禁用。', crrt_dose: '无需调整', pregnancy: 'C', pk_info: { mode: '时间依赖性', half_life: '30h', binding: '99%', excretion: '肝代谢' }, differentiation: '口服液空腹吸收好，胶囊需餐后。负性肌力作用，心衰禁用。', warning: '心衰患者禁用。' }, tags: ['真菌'] },
+            { id: 'av1', name: '阿昔洛韦 (Acyclovir)', category: '抗病毒药', details: { indications: 'HSV脑炎、带状疱疹。', dosage: 'IV 10mg/kg q8h。', child_dose: 'IV: 10mg/kg q8h。', renal_dose: '严格根据CCr延长间隔至 q12h/q24h。', crrt_dose: '2.5-5 mg/kg q24h', pregnancy: 'B', pk_info: { mode: '时间依赖性', half_life: '3h', binding: '15%', excretion: '肾排泄' }, differentiation: '与伐昔洛韦相比：口服生物利用度极低，仅适于静脉；静脉给药易致结晶性肾衰，需充分水化。', warning: '结晶肾风险，需多饮水。' }, tags: ['HSV'] },
+            { id: 'av2', name: '更昔洛韦 (Ganciclovir)', category: '抗病毒药', details: { indications: 'CMV视网膜炎、CMV肺炎。', dosage: 'IV 5mg/kg q12h (诱导)。', renal_dose: '需大幅减量。', crrt_dose: '2.5 mg/kg q24h', pregnancy: 'C', pk_info: { mode: '时间依赖性', half_life: '3h', binding: '2%', excretion: '肾排泄' }, differentiation: '抗CMV活性强于阿昔洛韦；主要毒性为骨髓抑制(白细胞/血小板减少)，较阿昔洛韦严重。', warning: '骨髓抑制，致畸。' }, tags: ['CMV'] },
+            { id: 'av3', name: '奥司他韦 (Oseltamivir)', category: '抗病毒药', details: { indications: '甲型/乙型流感。', dosage: 'PO 75mg bid (5天)。', child_dose: 'PO: <15kg 30mg bid; 15-23kg 45mg bid。', renal_dose: 'CCr 30-60: 30mg bid; CCr 10-30: 30mg qd。', crrt_dose: '30mg q12h 或 75mg q24h', pregnancy: 'C', pk_info: { mode: '时间依赖性', half_life: '6-10h', binding: '42%', excretion: '肾排泄' }, differentiation: '神经氨酸酶抑制剂。需在症状出现48小时内使用。', warning: '胃肠道反应。' }, tags: ['流感'] },
+            { id: 'meta1', name: '甲硝唑 (Metronidazole)', category: '厌氧/磺胺/其他', details: { indications: '腹腔/盆腔厌氧菌感染、滴虫、阿米巴、艰难梭菌。', dosage: 'IV/PO 0.5g q8h。', child_dose: 'IV: 7.5mg/kg q8h。', renal_dose: '无需调整 (代谢物积聚?)。', crrt_dose: '0.5g q8h', pregnancy: 'B (孕早期慎用)', pk_info: { mode: '浓度依赖性', half_life: '8h', binding: '20%', excretion: '肝代谢' }, differentiation: '与奥硝唑相比：半衰期较短(q8h vs q12h)，胃肠道反应和金属味更明显。双硫仑样反应必须戒酒。', warning: '严格禁酒。' }, tags: ['厌氧菌'] },
+            { id: 'clinda1', name: '克林霉素 (Clindamycin)', category: '厌氧/磺胺/其他', details: { indications: 'G+球菌(过敏者替代)、厌氧菌(膈上为主)。', dosage: 'IV 0.6g q8h (或q6h)。', child_dose: 'IV: 20-40mg/kg/day 分3-4次。', renal_dose: '无需调整。', crrt_dose: '无需调整', pregnancy: 'B', pk_info: { mode: '时间依赖性', half_life: '3h', binding: '90%', excretion: '肝代谢' }, differentiation: '抗厌氧菌活性，但耐药率高(尤其是脆弱拟杆菌)。风险：诱发艰难梭菌肠炎风险最高。', warning: '易致伪膜性肠炎。' }, tags: ['G+', '厌氧'] },
+            { id: 'smz', name: '复方磺胺 (SMZ-TMP)', category: '厌氧/磺胺/其他', details: { indications: '卡氏肺孢子菌(PCP)首选、嗜麦芽窄食单胞菌首选、尿路感染。', dosage: 'PO/IV 2-3片 bid-tid (PCP剂量大)。', child_dose: 'PO: 8-10mg/kg (TMP) 分2次。', renal_dose: 'CCr 15-30: 减半; CCr<15: 禁用。', crrt_dose: '剂量减半或 q24h', pregnancy: 'D', pk_info: { mode: '时间依赖性', half_life: '10h', binding: '70%', excretion: '肾排泄' }, differentiation: 'PCP治疗的金标准。常见过敏(皮疹/S-J综合征)。骨髓抑制。', warning: '多饮水防结晶尿。磺胺过敏禁用。' }, tags: ['PCP', '嗜麦芽'] },
+            { id: 'nitro', name: '呋喃妥因 (Nitrofurantoin)', category: '厌氧/磺胺/其他', details: { indications: '单纯性尿路感染 (下尿路)。', dosage: 'PO 100mg bid-qid (大晶体型 bid, 普通型 qid)。餐后服用。', child_dose: 'PO: 5-7mg/kg/day 分4次。', renal_dose: 'CCr < 60ml/min 禁用 (疗效差且毒性增加)。', crrt_dose: '禁用', pregnancy: 'B (足月禁)', pk_info: { mode: '浓度依赖', half_life: '0.5h', binding: '60%', excretion: '肾排泄' }, differentiation: '仅用于治疗下尿路感染（膀胱炎），不可用于肾盂肾炎（血药浓度极低）。长期使用可致肺纤维化。', warning: '肾功能不全禁用。G6PD缺乏者溶血风险。' }, tags: ['尿感首选'] },
+            { id: 'rif', name: '利福平 (Rifampin)', category: '厌氧/磺胺/其他', details: { indications: '结核病、假体/生物膜感染 (联合用药)、脑膜炎预防。', dosage: 'PO/IV 450-600mg qd (空腹)。', child_dose: 'PO: 10-20mg/kg qd。', renal_dose: '无需调整。', crrt_dose: '无需调整', pregnancy: 'C', pk_info: { mode: '浓度依赖', half_life: '3h', binding: '80%', excretion: '肝胆' }, differentiation: '穿透力极强（生物膜）。强效CYP450诱导剂，降低多种药物浓度（如华法林、口服避孕药）。分泌物（尿/泪）变红。', warning: '肝毒性。体液变红。不可单药治疗(易耐药)。' }, tags: ['生物膜', 'TB'] }
+        ];
+
+        // --- 2. 组件定义 ---
+
+        const Section = ({ title, iconName, content, warning = false, danger = false, pkInfo, customBg, customBorder, customText, isDiff = false }) => {
+            const Icon = window.Icons[iconName] || window.Icons.Info;
+            let colorClasses = { border: 'border-slate-200', bg: 'bg-white', text: 'text-slate-700', header: 'text-slate-800', icon: 'text-blue-600' };
+            if (danger) colorClasses = { border: 'border-red-200', bg: 'bg-red-50', text: 'text-red-900', header: 'text-red-700', icon: 'text-red-600' };
+            else if (warning) colorClasses = { border: 'border-amber-200', bg: 'bg-amber-50', text: 'text-amber-900', header: 'text-amber-700', icon: 'text-amber-600' };
+            else if (isDiff) colorClasses = { border: 'border-violet-200', bg: 'bg-violet-50', text: 'text-violet-900', header: 'text-violet-800', icon: 'text-violet-600' };
+            else if (customBg) colorClasses = { border: customBorder, bg: customBg, text: customText, header: customText, icon: customText };
+
+            const renderContent = () => {
+                if (pkInfo) {
+                    return (
+                        <div className="grid grid-cols-2 gap-3 text-xs md:text-sm">
+                            <div className="bg-white/60 p-2 rounded"><span className="opacity-60 block">杀菌模式</span><span className="font-semibold">{pkInfo.mode}</span></div>
+                            <div className="bg-white/60 p-2 rounded"><span className="opacity-60 block">半衰期</span><span className="font-semibold">{pkInfo.half_life}</span></div>
+                            <div className="bg-white/60 p-2 rounded"><span className="opacity-60 block">蛋白结合</span><span className="font-semibold">{pkInfo.binding}</span></div>
+                            <div className="bg-white/60 p-2 rounded"><span className="opacity-60 block">排泄</span><span className="font-semibold">{pkInfo.excretion}</span></div>
+                        </div>
+                    );
+                }
+                return typeof content === 'string' ? content.split('\n').map((l,i) => <p key={i} className="mb-1">{l}</p>) : '暂无数据';
+            };
+
+            return (
+                <div className={`rounded-xl border ${colorClasses.border} overflow-hidden shadow-sm mb-4 ${colorClasses.bg}`}>
+                    <div className={`w-full px-4 py-3 flex items-center gap-3 border-b border-black/5`}>
+                        <div className={`${colorClasses.icon} opacity-90`}><Icon size={18} /></div>
+                        <h3 className={`font-bold text-sm md:text-base ${colorClasses.header}`}>{title}</h3>
+                    </div>
+                    <div className={`p-4 text-sm leading-relaxed ${colorClasses.text}`}>{renderContent()}</div>
+                </div>
+            );
+        };
+
+        const PathogenTool = ({ onBack }) => {
+            const [query, setQuery] = React.useState('');
+            const filtered = pathogenData.filter(d => d.name.toLowerCase().includes(query.toLowerCase()));
+            return (
+                <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col h-full animate-in slide-in-from-right duration-300">
+                    <div className="bg-white border-b border-slate-200 safe-top sticky top-0 z-10">
+                        <div className="flex items-center gap-3 p-4">
+                            <button onClick={onBack} className="p-3 -ml-3 hover:bg-slate-100 rounded-full active:scale-95 transition-transform"><Icons.ChevronLeft size={24}/></button>
+                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Icons.Bug className="text-indigo-600"/> 病原体靶向治疗</h1>
+                        </div>
+                        <div className="px-4 pb-4 relative"><Icons.Search className="absolute left-7 top-3 w-5 h-5 text-slate-400"/><input type="text" placeholder="搜索病原体..." className="w-full pl-10 pr-4 py-3 bg-slate-100 rounded-xl outline-none" value={query} onChange={e=>setQuery(e.target.value)}/></div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 safe-bottom">
+                        {filtered.map(item => (
+                            <div key={item.id} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
+                                <div className="flex justify-between items-start">
+                                    <h3 className="font-bold text-lg">{item.name}</h3>
+                                    <span className="text-xs bg-slate-100 px-2 py-1 rounded text-slate-500 h-fit whitespace-nowrap ml-2">{item.type}</span>
+                                </div>
+                                <div className="mt-3 text-sm p-3 bg-green-50 rounded-lg border border-green-100">
+                                    <span className="font-bold text-green-700 block mb-1">首选方案</span>
+                                    {item.first_line}
+                                </div>
+                                <div className="mt-2 text-sm p-3 bg-slate-50 rounded-lg border border-slate-100">
+                                    <span className="font-bold text-slate-500 block mb-1">备选/联合</span>
+                                    {item.alternative}
+                                </div>
+                                {item.note && <div className="mt-2 text-xs text-slate-400 italic">注: {item.note}</div>}
+                            </div>
+                        ))}
+                        <div className="h-20"></div>
+                    </div>
+                </div>
+            )
+        };
+
+        const CalculatorTool = ({ onBack }) => {
+            const [gender, setGender] = React.useState('male');
+            const [age, setAge] = React.useState('');
+            const [weight, setWeight] = React.useState('');
+            const [scr, setScr] = React.useState('');
+            const [result, setResult] = React.useState(null);
+
+            const calculate = () => {
+                if (!age || !weight || !scr) return;
+                const scrVal = parseFloat(scr);
+                const weightVal = parseFloat(weight);
+                const ageVal = parseFloat(age);
+                let ccr = ((140 - ageVal) * weightVal * 1.23) / scrVal;
+                if (gender === 'female') ccr = ccr * 0.85;
+                setResult(ccr.toFixed(1));
+            };
+
+            return (
+                 <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col h-full animate-in slide-in-from-right duration-300">
+                    <div className="bg-white border-b border-slate-200 safe-top sticky top-0 z-10">
+                        <div className="flex items-center gap-3 p-4">
+                            <button onClick={onBack} className="p-3 -ml-3 hover:bg-slate-100 rounded-full active:scale-95 transition-transform"><Icons.ChevronLeft size={24}/></button>
+                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Icons.Calculator className="text-emerald-600"/> 肾功能计算器 (CCr)</h1>
+                        </div>
+                    </div>
+                    <div className="p-6 space-y-6 overflow-y-auto safe-bottom">
+                        <div className="flex bg-slate-100 p-1 rounded-xl">
+                            <button onClick={()=>setGender('male')} className={`flex-1 py-3 rounded-lg font-bold transition-all ${gender==='male' ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}>男性</button>
+                            <button onClick={()=>setGender('female')} className={`flex-1 py-3 rounded-lg font-bold transition-all ${gender==='female' ? 'bg-white shadow text-rose-500' : 'text-slate-400'}`}>女性</button>
+                        </div>
+                        <div className="space-y-4">
+                            <div><label className="text-xs font-bold text-slate-500 uppercase ml-1">年龄 (岁)</label><input type="number" value={age} onChange={e=>setAge(e.target.value)} className="w-full p-4 border rounded-xl mt-1 bg-white outline-none focus:ring-2 focus:ring-emerald-500" placeholder="如: 65" /></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase ml-1">体重 (kg)</label><input type="number" value={weight} onChange={e=>setWeight(e.target.value)} className="w-full p-4 border rounded-xl mt-1 bg-white outline-none focus:ring-2 focus:ring-emerald-500" placeholder="如: 70" /></div>
+                            <div><label className="text-xs font-bold text-slate-500 uppercase ml-1">血肌酐 (umol/L)</label><input type="number" value={scr} onChange={e=>setScr(e.target.value)} className="w-full p-4 border rounded-xl mt-1 bg-white outline-none focus:ring-2 focus:ring-emerald-500" placeholder="如: 120" /></div>
+                        </div>
+                        <button onClick={calculate} className="w-full py-4 bg-emerald-600 text-white rounded-xl font-bold text-lg shadow-lg hover:bg-emerald-700 active:scale-95 transition-all">计算 CCr</button>
+                        {result && (
+                            <div className="bg-white border-2 border-emerald-100 p-6 rounded-2xl text-center shadow-sm animate-in zoom-in duration-300">
+                                <div className="text-sm text-slate-400 uppercase font-bold tracking-wider">估算肌酐清除率</div>
+                                <div className="text-6xl font-black text-emerald-600 my-4">{result}</div>
+                                <div className="text-sm text-emerald-800 font-medium">ml/min</div>
+                            </div>
+                        )}
+                        <div className="h-20"></div>
+                    </div>
+                 </div>
+            );
+        };
+
+        const CandidaTool = ({ onBack }) => {
+            const [criteria, setCriteria] = React.useState({ surgery: false, tpn: false, colonization: false, sepsis: false });
+            const toggle = (key) => setCriteria(prev => ({...prev, [key]: !prev[key]}));
+            const score = (criteria.surgery ? 1 : 0) + (criteria.tpn ? 1 : 0) + (criteria.colonization ? 1 : 0) + (criteria.sepsis ? 2 : 0);
+            const isHighRisk = score >= 3;
+            const Item = ({ label, desc, active, onClick }) => (
+                <div onClick={onClick} className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex justify-between items-center ${active ? 'border-orange-500 bg-orange-50' : 'border-slate-100 bg-white'}`}>
+                    <div><div className={`font-bold ${active ? 'text-orange-900' : 'text-slate-700'}`}>{label}</div><div className="text-xs text-slate-400 mt-1">{desc}</div></div>
+                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${active ? 'border-orange-500 bg-orange-500' : 'border-slate-200'}`}>{active && <Icons.Pill className="text-white w-4 h-4" />}</div>
+                </div>
+            );
+            return (
+                <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col h-full animate-in slide-in-from-right duration-300">
+                    <div className="bg-white border-b border-slate-200 safe-top sticky top-0 z-10">
+                        <div className="flex items-center gap-3 p-4">
+                            <button onClick={onBack} className="p-3 -ml-3 hover:bg-slate-100 rounded-full active:scale-95 transition-transform"><Icons.ChevronLeft size={24}/></button>
+                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Icons.ClipboardCheck className="text-orange-600"/> 念珠菌评分 (Leon)</h1>
+                        </div>
+                    </div>
+                    <div className="p-6 space-y-4 overflow-y-auto safe-bottom">
+                        <div className="text-sm text-slate-500 mb-2">Leon C, et al. Crit Care Med. 2006.</div>
+                        <Item label="全胃肠外营养 (TPN)" desc="Total Parenteral Nutrition" active={criteria.tpn} onClick={() => toggle('tpn')} />
+                        <Item label="外科手术" desc="Surgery (immediate post-op period)" active={criteria.surgery} onClick={() => toggle('surgery')} />
+                        <Item label="多部位定植" desc="Multifocal colonization (≥2 sites)" active={criteria.colonization} onClick={() => toggle('colonization')} />
+                        <Item label="严重脓毒症" desc="Severe Sepsis (2分)" active={criteria.sepsis} onClick={() => toggle('sepsis')} />
+                        <div className={`mt-8 p-6 rounded-2xl text-center transition-all ${isHighRisk ? 'bg-red-50 border-2 border-red-100' : 'bg-green-50 border-2 border-green-100'}`}>
+                            <div className="text-sm uppercase font-bold tracking-wider opacity-60 mb-2">总评分</div>
+                            <div className={`text-6xl font-black mb-4 ${isHighRisk ? 'text-red-600' : 'text-green-600'}`}>{score}</div>
+                            <div className={`font-bold text-lg mb-2 ${isHighRisk ? 'text-red-800' : 'text-green-800'}`}>{isHighRisk ? '高风险 (≥3)' : '低风险 (<3)'}</div>
+                            <p className="text-sm opacity-80 leading-relaxed">{isHighRisk ? '建议立即启动经验性抗真菌治疗（如卡泊芬净、米卡芬净或氟康唑）。' : '暂不建议抗真菌治疗，建议密切观察及定期监测。'}</p>
+                        </div>
+                        <div className="h-20"></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const WVUHTool = ({ onBack }) => {
+            const [isICU, setIsICU] = React.useState(false);
+            const [factors, setFactors] = React.useState({
+                abx: false, giSurgery: false, cvc: false, icuStay: false, fever: false, hema: false,
+                hypotension: false, diabetes: false, catheter: false, vent: false, tpn: false, neutropenia: false
+            });
+
+            const toggle = (key) => setFactors(prev => ({...prev, [key]: !prev[key]}));
+
+            const calculateScore = () => {
+                let s = 0;
+                if (factors.abx) s += 5;
+                if (factors.giSurgery) s += 5;
+                if (factors.cvc) s += 5;
+                if (factors.icuStay) s += 5;
+                if (factors.fever) s += 5;
+                if (factors.hema) s += 5;
+                if (factors.hypotension) s += 3;
+                if (factors.diabetes) s += 3;
+                if (factors.catheter) s += 3;
+                if (factors.vent) s += 3;
+                if (factors.tpn) s += 3;
+                if (factors.neutropenia) s += 3;
+                return s;
+            };
+
+            const score = calculateScore();
+            
+            let riskText = '低风险';
+            let color = 'bg-green-50 border-green-200 text-green-900';
+            let scoreColor = 'text-green-600';
+            let advice = '目前评分较低。建议继续监测临床体征。';
+
+            if (score >= 5 && score < 15) {
+                riskText = '中等风险';
+                color = 'bg-yellow-50 border-yellow-200 text-yellow-900';
+                scoreColor = 'text-yellow-600';
+                advice = '存在一定真菌感染风险，建议密切关注，必要时完善G试验/GM试验或真菌培养。';
+            } else if (score >= 15) {
+                riskText = '高风险';
+                color = 'bg-rose-50 border-rose-200 text-rose-900';
+                scoreColor = 'text-rose-600';
+                advice = '侵袭性真菌感染风险极高。建议结合临床立即进行真菌培养，并考虑启动抢先治疗或经验性抗真菌治疗。';
+            }
+
+            const Item = ({ label, points, active, onClick }) => (
+                <div onClick={onClick} className={`p-4 rounded-xl border transition-all cursor-pointer flex justify-between items-center mb-2 active:scale-[0.98] ${active ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-100 bg-white'}`}>
+                    <div className="flex items-center gap-2">
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 ${active ? 'bg-indigo-500 border-indigo-500' : 'border-slate-300'}`}>
+                            {active && <div className="bg-white w-2 h-2 rounded-full"/>}
+                        </div>
+                        <span className={`font-bold text-sm ${active ? 'text-indigo-900' : 'text-slate-600'}`}>{label}</span>
+                    </div>
+                    <span className={`text-xs font-bold px-2 py-1 rounded flex-shrink-0 ${active ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-400'}`}>+{points}分</span>
+                </div>
+            );
+
+            return (
+                <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col h-full animate-in slide-in-from-right duration-300">
+                    <div className="bg-white border-b border-slate-200 safe-top sticky top-0 z-10">
+                        <div className="flex items-center gap-3 p-4">
+                            <button onClick={onBack} className="p-3 -ml-3 hover:bg-slate-100 rounded-full active:scale-95 transition-transform"><Icons.ChevronLeft size={24}/></button>
+                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Icons.Flask className="text-indigo-600"/> MDRA 评分</h1>
+                        </div>
+                    </div>
+                    <div className="p-4 overflow-y-auto safe-bottom">
+                        <div className="space-y-6 pb-24">
+                            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                                <div className="flex justify-between items-center">
+                                    <span className="font-bold text-slate-700">患者是否是 ICU 病人？</span>
+                                    <div className="flex bg-slate-100 p-1 rounded-lg">
+                                        <button onClick={() => setIsICU(false)} className={`px-3 py-1 text-xs rounded-md font-bold transition-all ${!isICU ? 'bg-white shadow text-slate-800' : 'text-slate-400'}`}>否</button>
+                                        <button onClick={() => setIsICU(true)} className={`px-3 py-1 text-xs rounded-md font-bold transition-all ${isICU ? 'bg-rose-500 shadow text-white' : 'text-slate-400'}`}>是</button>
+                                    </div>
+                                </div>
+                                {isICU && <div className="mt-2 text-xs text-rose-500 bg-rose-50 p-2 rounded">提示：ICU 患者是侵袭性真菌感染的高危人群。</div>}
+                            </div>
+
+                            <div>
+                                <div className="mb-2 px-1 text-xs font-bold text-slate-400 uppercase tracking-wider flex justify-between">
+                                    <span>临床危险因素 (每项 5分)</span>
+                                </div>
+                                <Item label="广谱抗生素治疗 ≥ 4d" points={5} active={factors.abx} onClick={() => toggle('abx')} />
+                                <Item label="胃肠道手术" points={5} active={factors.giSurgery} onClick={() => toggle('giSurgery')} />
+                                <Item label="中心静脉插管" points={5} active={factors.cvc} onClick={() => toggle('cvc')} />
+                                <Item label="入住 ICU ≥ 4d" points={5} active={factors.icuStay} onClick={() => toggle('icuStay')} />
+                                <Item label="合理抗生素治疗4d后，体温仍>38℃" points={5} active={factors.fever} onClick={() => toggle('fever')} />
+                                <Item label="血液系统恶性肿瘤" points={5} active={factors.hema} onClick={() => toggle('hema')} />
+                            </div>
+
+                            <div>
+                                <div className="mb-2 px-1 text-xs font-bold text-slate-400 uppercase tracking-wider">临床危险因素 (每项 3分)</div>
+                                <Item label="低血压" points={3} active={factors.hypotension} onClick={() => toggle('hypotension')} />
+                                <Item label="糖尿病" points={3} active={factors.diabetes} onClick={() => toggle('diabetes')} />
+                                <Item label="留置导尿管" points={3} active={factors.catheter} onClick={() => toggle('catheter')} />
+                                <Item label="人工呼吸机应用 > 2d" points={3} active={factors.vent} onClick={() => toggle('vent')} />
+                                <Item label="全胃肠外营养 (TPN)" points={3} active={factors.tpn} onClick={() => toggle('tpn')} />
+                                <Item label="粒细胞减少 (< 1.0×10⁹/L)" points={3} active={factors.neutropenia} onClick={() => toggle('neutropenia')} />
+                            </div>
+
+                            <div className={`p-6 rounded-2xl border-2 transition-all shadow-sm ${color}`}>
+                                <div className="flex justify-between items-end mb-4 border-b border-black/5 pb-4">
+                                    <span className="font-bold opacity-70">MDRA 评分总分</span>
+                                    <span className={`text-5xl font-black ${scoreColor}`}>{score}</span>
+                                </div>
+                                <div className="mb-2 font-bold text-lg">{riskText}</div>
+                                <div className="text-sm leading-relaxed opacity-90">{advice}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const CDSSTool = ({ onBack }) => {
+            const [factors, setFactors] = React.useState({
+                underlying: false,
+                bleeding: false,
+                organFailure: false,
+                plt: 0, 
+                pt: 0,
+                fbg: 0,
+                marker: 0
+            });
+
+            const toggle = (key) => setFactors(prev => ({...prev, [key]: !prev[key]}));
+            const setVal = (key, val) => setFactors(prev => ({...prev, [key]: val}));
+
+            const calculateScore = () => {
+                let s = 0;
+                if (factors.underlying) s += 2;
+                if (factors.bleeding) s += 1;
+                if (factors.organFailure) s += 1;
+                s += factors.plt;
+                s += factors.pt;
+                s += factors.fbg;
+                s += factors.marker;
+                return s;
+            };
+
+            const score = calculateScore();
+            const isDIC = score >= 7;
+
+            const CheckItem = ({ label, active, onClick }) => (
+                <div onClick={onClick} className={`p-4 rounded-xl border transition-all cursor-pointer flex justify-between items-center mb-2 ${active ? 'border-rose-500 bg-rose-50' : 'border-slate-100 bg-white'}`}>
+                    <span className={`font-bold text-sm ${active ? 'text-rose-900' : 'text-slate-600'}`}>{label}</span>
+                    <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${active ? 'bg-rose-500 border-rose-500' : 'border-slate-300'}`}>{active && <div className="bg-white w-2 h-2 rounded-full"/>}</div>
+                </div>
+            );
+
+            const RadioGroup = ({ label, options, value, onChange }) => (
+                <div className="mb-4 bg-white p-4 rounded-xl border border-slate-100">
+                    <div className="text-xs font-bold text-slate-400 uppercase mb-3">{label}</div>
+                    <div className="grid grid-cols-1 gap-2">
+                        {options.map((opt, idx) => (
+                            <div key={idx} onClick={() => onChange(opt.val)} 
+                                className={`p-3 rounded-lg border text-sm font-medium transition-all cursor-pointer flex justify-between ${value === opt.val ? 'bg-indigo-50 border-indigo-500 text-indigo-900' : 'border-slate-200 text-slate-600'}`}>
+                                <span>{opt.label}</span>
+                                {value === opt.val && <span className="text-xs bg-indigo-200 text-indigo-800 px-2 rounded">+{opt.val}</span>}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col h-full animate-in slide-in-from-right duration-300">
+                    <div className="bg-white border-b border-slate-200 safe-top sticky top-0 z-10">
+                        <div className="flex items-center gap-3 p-4">
+                            <button onClick={onBack} className="p-3 -ml-3 hover:bg-slate-100 rounded-full active:scale-95 transition-transform"><Icons.ChevronLeft size={24}/></button>
+                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Icons.Droplet className="text-rose-600"/> DIC 评分 (CDSS 2017)</h1>
+                        </div>
+                    </div>
+                    <div className="p-4 overflow-y-auto safe-bottom">
+                        <div className="space-y-4 pb-24">
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1">基础与临床 (Basic & Clinical)</div>
+                            <CheckItem label="存在易致DIC的基础疾病 (如感染/肿瘤/创伤)" active={factors.underlying} onClick={() => toggle('underlying')} />
+                            <CheckItem label="有出血症状 (非原发病/创伤所致)" active={factors.bleeding} onClick={() => toggle('bleeding')} />
+                            <CheckItem label="有休克或微循环衰竭/脏器功能衰竭" active={factors.organFailure} onClick={() => toggle('organFailure')} />
+
+                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider px-1 mt-6">实验室指标 (Laboratory)</div>
+                            <RadioGroup label="血小板计数 (PLT)" value={factors.plt} onChange={(v) => setVal('plt', v)} 
+                                options={[{l:'>100', val:0, label:'> 100 x10^9/L'}, {l:'50-100', val:1, label:'50 - 100 x10^9/L'}, {l:'<50', val:2, label:'< 50 x10^9/L'}]} />
+                            
+                            <RadioGroup label="凝血酶原时间延长 (PT Prolongation)" value={factors.pt} onChange={(v) => setVal('pt', v)} 
+                                options={[{val:0, label:'< 3 秒'}, {val:1, label:'3 - 6 秒'}, {val:2, label:'> 6 秒'}]} />
+                            
+                            <RadioGroup label="纤维蛋白原 (Fbg)" value={factors.fbg} onChange={(v) => setVal('fbg', v)} 
+                                options={[{val:0, label:'> 1.0 g/L'}, {val:1, label:'< 1.0 g/L'}]} />
+
+                            <RadioGroup label="FDP 或 D-二聚体 (FDP/D-Dimer)" value={factors.marker} onChange={(v) => setVal('marker', v)} 
+                                options={[{val:0, label:'正常'}, {val:1, label:'升高 (Elevated)'}, {val:3, label:'显著升高 (Significantly Elevated)'}]} />
+
+                            <div className={`mt-6 p-6 rounded-2xl border-2 text-center transition-all ${isDIC ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-slate-100 border-slate-200 text-slate-600'}`}>
+                                <div className="text-sm uppercase font-bold tracking-wider opacity-70 mb-2">CDSS 总评分</div>
+                                <div className={`text-6xl font-black mb-4 ${isDIC ? 'text-rose-600' : 'text-slate-700'}`}>{score}</div>
+                                <div className="font-bold text-lg mb-2">{isDIC ? '提示显性 DIC (≥7)' : '非显性 DIC (<7)'}</div>
+                                <p className="text-sm opacity-80 leading-relaxed">{isDIC ? '符合中国 DIC 诊断标准(2017)。建议结合临床积极处理原发病并给予相应支持治疗。' : '尚未达到显性 DIC 诊断标准。建议密切监测，每日评分。'}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ToolsMenu = ({ onNavigate, onBack }) => {
+            const tools = [
+                { id: 'calculator', name: '肾功能计算', sub: 'CCr / eGFR', icon: 'Calculator', color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+                { id: 'candida', name: 'Candida 评分', sub: 'Leon Score', icon: 'ClipboardCheck', color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-100' },
+                { id: 'wvuh', name: 'MDRA 评分', sub: '深部真菌风险', icon: 'Flask', color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-100' },
+                { id: 'dic', name: 'DIC 评分', sub: 'CDSS 2017', icon: 'Droplet', color: 'text-rose-600', bg: 'bg-rose-50', border: 'border-rose-100' },
+            ];
+
+            return (
+                <div className="fixed inset-0 z-50 bg-slate-50 flex flex-col h-full animate-in slide-in-from-right duration-300">
+                    <div className="bg-white border-b border-slate-200 safe-top sticky top-0 z-10">
+                        <div className="flex items-center gap-3 p-4">
+                            <button onClick={onBack} className="p-3 -ml-3 hover:bg-slate-100 rounded-full active:scale-95 transition-transform"><Icons.ChevronLeft size={24}/></button>
+                            <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2"><Icons.Grid className="text-slate-600"/> 临床工具箱</h1>
+                        </div>
+                    </div>
+                    <div className="p-4 grid grid-cols-1 gap-4 safe-bottom overflow-y-auto">
+                        {tools.map(tool => {
+                            const Icon = Icons[tool.icon];
+                            return (
+                                <button key={tool.id} onClick={() => onNavigate(tool.id)} className={`flex items-center p-5 rounded-2xl border-2 text-left transition-all active:scale-[0.98] shadow-sm ${tool.bg} ${tool.border}`}>
+                                    <div className={`w-12 h-12 rounded-full bg-white flex items-center justify-center shadow-sm mr-4 ${tool.color}`}>
+                                        <Icon size={24} />
+                                    </div>
+                                    <div>
+                                        <div className={`font-bold text-lg ${tool.color.replace('600', '900')}`}>{tool.name}</div>
+                                        <div className="text-slate-500 text-sm">{tool.sub}</div>
+                                    </div>
+                                </button>
+                            )
+                        })}
+                    </div>
+                </div>
+            );
+        };
+
+        const DrugDetail = ({ drug, onBack }) => {
+            if (!drug) return null;
+            const pregColors = { 'A': 'bg-green-100 text-green-700', 'B': 'bg-emerald-100 text-emerald-700', 'C': 'bg-amber-100 text-amber-700', 'D': 'bg-orange-100 text-orange-700', 'X': 'bg-red-100 text-red-700' };
+            const pregClass = pregColors[drug.details.pregnancy?.[0]] || 'bg-slate-100 text-slate-600';
+
+            return (
+                <div className="fixed inset-0 z-40 bg-slate-50 flex flex-col h-full animate-in slide-in-from-right duration-300 md:static md:animate-none">
+                    <div className="bg-white border-b border-slate-200 shadow-sm safe-top sticky top-0 z-20">
+                        <div className="flex items-center gap-3 p-4">
+                            <button onClick={onBack} className="p-3 -ml-3 md:hidden hover:bg-slate-100 rounded-full active:scale-95 transition-transform"><Icons.ChevronLeft size={24}/></button>
+                            <div>
+                                <h2 className="text-lg font-bold text-slate-900 leading-none">{drug.name}</h2>
+                                <div className="flex gap-2 mt-2">
+                                    <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100 font-bold">{drug.category}</span>
+                                    {drug.details.pregnancy && <span className={`text-[10px] px-1.5 py-0.5 rounded border font-bold ${pregClass}`}>妊娠: {drug.details.pregnancy}</span>}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-24 safe-bottom bg-slate-50">
+                        {drug.details.warning && <div className="bg-red-50 border border-red-200 p-4 rounded-xl flex gap-3 shadow-sm"><Icons.AlertTriangle className="text-red-600 flex-shrink-0" /><div className="text-red-900 text-sm font-medium leading-relaxed">{drug.details.warning}</div></div>}
+                        {drug.details.differentiation && <Section title="同类药物对比与鉴别" iconName="Scale" content={drug.details.differentiation} isDiff={true} />}
+                        <Section title="适应症" iconName="Activity" content={drug.details.indications} />
+                        {drug.details.pk_info && <Section title="药代动力学 (PK/PD)" iconName="Timer" pkInfo={drug.details.pk_info} customBg="bg-slate-100" customBorder="border-slate-300" customText="text-slate-800" />}
+                        <Section title="成人用法" iconName="Pill" content={drug.details.dosage} />
+                        {drug.details.child_dose && <Section title="儿童参考用法" iconName="Baby" content={drug.details.child_dose} customBg="bg-orange-50" customBorder="border-orange-200" customText="text-orange-900" />}
+                        <Section title="肾功能调整 (CCr)" iconName="Droplet" content={drug.details.renal_dose} warning />
+                        {drug.details.crrt_dose && <Section title="CRRT 剂量建议" iconName="Stethoscope" content={drug.details.crrt_dose} customBg="bg-teal-50" customBorder="border-teal-200" customText="text-teal-900" />}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- 主程序 ---
+        const App = () => {
+            const [view, setView] = React.useState('home'); 
+            const [selectedCategory, setSelectedCategory] = React.useState('全部');
+            const [searchQuery, setSearchQuery] = React.useState('');
+            const [selectedDrug, setSelectedDrug] = React.useState(null);
+
+            const filteredDrugs = React.useMemo(() => {
+                return antibioticsData.filter(drug => {
+                    const matchesCategory = selectedCategory === '全部' || drug.category.includes(selectedCategory) || (selectedCategory.includes('/') && drug.category === selectedCategory);
+                    const matchesSearch = drug.name.toLowerCase().includes(searchQuery.toLowerCase()) || drug.details.indications.includes(searchQuery) || drug.category.includes(searchQuery) || drug.tags.some(tag => tag.includes(searchQuery));
+                    return matchesCategory && matchesSearch;
+                });
+            }, [selectedCategory, searchQuery]);
+
+            return (
+                <div className="flex h-screen w-screen overflow-hidden bg-white">
+                    {/* 路由层 */}
+                    {view === 'pathogen' && <PathogenTool onBack={() => setView('home')} />}
+                    {view === 'tools' && <ToolsMenu onNavigate={(toolId) => setView(toolId)} onBack={() => setView('home')} />}
+                    {view === 'calculator' && <CalculatorTool onBack={() => setView('tools')} />}
+                    {view === 'candida' && <CandidaTool onBack={() => setView('tools')} />}
+                    {view === 'wvuh' && <WVUHTool onBack={() => setView('tools')} />}
+                    {view === 'dic' && <CDSSTool onBack={() => setView('tools')} />}
+
+                    {/* 左侧/主列表区域 */}
+                    <div className={`flex-1 md:w-[400px] md:flex-none flex flex-col bg-white border-r border-slate-200 h-full ${selectedDrug ? 'hidden md:flex' : 'flex'}`}>
+                        <div className="safe-top bg-white border-b border-slate-100 z-10 sticky top-0">
+                            <div className="p-4 flex items-center gap-3">
+                                <div className="bg-blue-600 text-white p-2.5 rounded-xl shadow-lg shadow-blue-200"><Icons.Book size={24} /></div>
+                                <div><h1 className="text-xl font-bold text-slate-900 leading-none">抗生素助手 Pro</h1><span className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mt-1 block">Ultimate+ V7.3</span></div>
+                            </div>
+                            <div className="px-4 pb-4">
+                                <div className="relative">
+                                    <Icons.Search className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+                                    <input type="text" placeholder="搜药物: 舒巴坦, 呋喃妥因..." className="w-full bg-slate-100 pl-12 pr-4 py-3.5 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 transition-all text-base" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 核心功能入口 - 大卡片 */}
+                        <div className="p-4 bg-white border-b border-slate-100 grid grid-cols-2 gap-3">
+                             <button onClick={() => setView('pathogen')} className="flex flex-col items-center justify-center p-4 bg-indigo-50 border border-indigo-100 rounded-2xl active:scale-[0.97] transition-all h-24">
+                                <div className="bg-white w-10 h-10 rounded-full flex items-center justify-center text-indigo-600 mb-2 shadow-sm"><Icons.Bug size={20}/></div>
+                                <span className="font-bold text-indigo-900 text-sm">病原体靶向</span>
+                             </button>
+                             <button onClick={() => setView('tools')} className="flex flex-col items-center justify-center p-4 bg-emerald-50 border border-emerald-100 rounded-2xl active:scale-[0.97] transition-all h-24 relative overflow-hidden">
+                                <div className="absolute top-2 right-2 flex gap-1">
+                                    <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                                </div>
+                                <div className="bg-white w-10 h-10 rounded-full flex items-center justify-center text-emerald-600 mb-2 shadow-sm"><Icons.Grid size={20}/></div>
+                                <span className="font-bold text-emerald-900 text-sm">临床工具箱</span>
+                             </button>
+                        </div>
+
+                        <div className="px-4 py-3 overflow-x-auto whitespace-nowrap scrollbar-hide border-b border-slate-100 bg-white">
+                            <div className="flex gap-2">
+                                {categories.map(cat => (
+                                    <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${selectedCategory === cat ? 'bg-blue-600 text-white shadow-md shadow-blue-200' : 'bg-slate-100 text-slate-500 active:bg-slate-200'}`}>{cat}</button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-3 bg-slate-50 space-y-3 safe-bottom">
+                            {filteredDrugs.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-48 text-slate-400"><Icons.Database className="opacity-20 w-12 h-12 mb-2" /><span className="text-xs">未找到药物</span></div>
+                            ) : (
+                                filteredDrugs.map(drug => (
+                                    <div key={drug.id} onClick={() => setSelectedDrug(drug)} className={`p-4 rounded-2xl border bg-white cursor-pointer active:scale-[0.98] transition-all ${selectedDrug?.id === drug.id ? 'border-blue-500 ring-1 ring-blue-500 shadow-md' : 'border-slate-200 shadow-sm'}`}>
+                                        <div className="flex justify-between items-start"><span className="font-bold text-slate-800 text-base">{drug.name}</span>{drug.details.warning && <Icons.AlertTriangle size={16} className="text-amber-500" />}</div>
+                                        <div className="flex gap-2 mt-2 flex-wrap">
+                                            <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-1 rounded border border-slate-200">{drug.category}</span>
+                                            {drug.details.pregnancy && <span className="text-[10px] bg-green-50 text-green-600 px-2 py-1 rounded border border-green-100 font-bold">妊{drug.details.pregnancy}</span>}
+                                            {drug.tags.map(t => <span key={t} className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded border border-blue-100">{t}</span>)}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                            <div className="h-24 md:hidden"></div>
+                        </div>
+                    </div>
+
+                    <div className={`flex-1 bg-slate-50 relative h-full ${selectedDrug ? 'block' : 'hidden md:block'}`}>
+                        {selectedDrug ? <DrugDetail drug={selectedDrug} onBack={() => setSelectedDrug(null)} /> : <div className="flex flex-col items-center justify-center h-full text-slate-400"><div className="w-32 h-32 bg-white rounded-full flex items-center justify-center shadow-sm border border-slate-200 mb-6"><Icons.Book size={48} className="text-slate-300" /></div><h2 className="text-xl font-bold text-slate-600">抗生素用药助手 Ultimate+</h2><p className="text-sm mt-2 text-slate-500">已修复所有组件问题 V7.3</p></div>}
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
